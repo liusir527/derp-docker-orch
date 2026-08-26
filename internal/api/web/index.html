@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DERP 中继平台</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --surface: #161b24;
+    --surface-2: #1d2430;
+    --text: #e6eaf0;
+    --muted: #8b94a3;
+    --accent: #4cc9a0;
+    --danger: #f4706f;
+    --border: #2a3342;
+    --mono: "SF Mono", "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 2rem 1rem; max-width: 760px; margin: 0 auto;
+  }
+  header h1 { font-size: 1.6rem; letter-spacing: -0.02em; }
+  header p { color: var(--muted); margin-top: .2rem; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.2rem; margin-top: 1.2rem;
+  }
+  .card h2 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: .8rem; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: .3rem; }
+  input, select, button, textarea { font: inherit; }
+  input[type=password], select {
+    width: 100%; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: .5rem .6rem;
+  }
+  button {
+    border: 0; border-radius: 6px; padding: .55rem 1.1rem; cursor: pointer;
+    background: var(--accent); color: #08120e; font-weight: 600;
+  }
+  button.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: var(--danger); color: #1a0505; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; gap: .8rem; align-items: flex-end; }
+  .row > *:first-child { flex: 1; }
+  textarea {
+    width: 100%; min-height: 210px; resize: vertical;
+    background: #0a0d12; color: var(--accent); border: 1px solid var(--border);
+    border-radius: 6px; padding: .7rem; font-family: var(--mono); font-size: 12.5px;
+  }
+  .key { color: var(--muted); font-size: .8rem; margin-bottom: .3rem; }
+  .val { font-family: var(--mono); font-size: .95rem; word-break: break-all; }
+  .pill { display: inline-block; font-size: .75rem; padding: .1rem .5rem; border-radius: 99px; }
+  .pill.up { background: #123528; color: var(--accent); }
+  .pill.down { background: #3a1c1c; color: var(--danger); }
+  #timer { font-family: var(--mono); color: var(--accent); }
+  .msg { font-size: .85rem; margin-top: .5rem; min-height: 1.2em; }
+  .msg.err { color: var(--danger); }
+  ul#list { list-style: none; padding: 0; }
+  #list li {
+    display: flex; justify-content: space-between; align-items: center; gap: .6rem;
+    padding: .7rem 0; border-top: 1px solid var(--border);
+  }
+  #list li .left { min-width: 0; }
+  #list li .name { font-family: var(--mono); font-size: .9rem; }
+  #list li .sub { color: var(--muted); font-size: .75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DERP 中继平台</h1>
+  <p>创建临时 DERP 中继 → 复制 derpMap → 粘贴进 Tailscale ACL。到期自动回收。</p>
+</header>
+
+<div class="card" id="auth-card">
+  <h2>接入</h2>
+  <label for="apikey">管理密钥</label>
+  <input type="password" id="apikey" placeholder="Admin API Key" autocomplete="off">
+  <p class="msg err" id="auth-msg"></p>
+</div>
+
+<div class="card">
+  <h2>新建中继</h2>
+  <div class="row">
+    <div>
+      <label for="ttl">有效期</label>
+      <select id="ttl">
+        <option value="1">1 小时</option>
+        <option value="6">6 小时</option>
+        <option value="24" selected>24 小时</option>
+        <option value="168">7 天</option>
+      </select>
+    </div>
+    <button id="btn-create">创建中继</button>
+  </div>
+  <p class="msg" id="create-msg"></p>
+</div>
+
+<div class="card" id="detail-card" hidden>
+  <h2>实例详情</h2>
+  <div class="key">子域名</div>
+  <div class="val" id="d-subdomain"></div>
+  <div class="key" style="margin-top:.8rem">regionID / stunPort</div>
+  <div class="val" id="d-ports"></div>
+  <div class="key" style="margin-top:.8rem">容器状态 <span class="pill down" id="d-state">…</span></div>
+  <div class="key" style="margin-top:.8rem">剩余有效期 <span id="timer">–</span></div>
+  <div class="key" style="margin-top:1rem">derpMap(粘贴进 ACL policy 文件)</div>
+  <textarea id="d-derpmap" readonly></textarea>
+  <div class="row" style="margin-top:.8rem">
+    <button id="btn-copy">复制 derpMap</button>
+    <button class="danger" id="btn-delete">删除实例</button>
+  </div>
+  <p class="msg" id="detail-msg"></p>
+</div>
+
+<div class="card" id="list-card">
+  <h2>全部实例</h2>
+  <ul id="list"></ul>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const KEY = 'derpOrchApiKey';
+
+  const api = (path, opts = {}) => {
+    const key = $('apikey').value.trim();
+    return fetch(path, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key, ...(opts.headers || {}) },
+    }).then(async res => {
+      if (res.status === 401) throw new Error('未授权: 请检查管理密钥');
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body.ok === false) throw new Error(body.error || ('HTTP ' + res.status));
+      return body.data;
+    });
+  };
+
+  let current = null; // 当前详情实例
+  let timer = null;
+
+  const fmt = s => {
+    s = Math.max(0, Math.floor(s));
+    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+    return (d ? d + '天 ' : '') + (h ? h + '时 ' : '') + (m ? m + '分 ' : '') + sec + '秒';
+  };
+
+  const renderList = async () => {
+    const list = await api('/v1/instances');
+    const ul = $('list');
+    ul.textContent = '';
+    for (const i of list) {
+      const li = document.createElement('li');
+      const left = document.createElement('div');
+      left.className = 'left';
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = i.name;
+      const sub = document.createElement('div');
+      sub.className = 'sub';
+      sub.textContent = i.subdomain;
+      left.append(name, sub);
+      const btn = document.createElement('button');
+      btn.className = 'secondary';
+      btn.textContent = '查看';
+      btn.onclick = () => openDetail(i.id);
+      li.append(left, btn);
+      ul.appendChild(li);
+    }
+  };
+
+  const openDetail = async id => {
+    const d = await api('/v1/instances/' + encodeURIComponent(id));
+    current = d;
+    $('detail-card').hidden = false;
+    // 全部 textContent 渲染,防注入。
+    $('d-subdomain').textContent = d.instance.subdomain;
+    $('d-ports').textContent = 'regionID ' + d.instance.regionId + ' · stunPort ' + d.instance.stunPort;
+    $('d-derpmap').value = JSON.stringify(d.derpMap, null, 2);
+    const state = $('d-state');
+    state.textContent = d.containerState;
+    state.className = 'pill ' + (d.containerState === 'running' ? 'up' : 'down');
+    startTimer(d.secondsRemaining);
+  };
+
+  const startTimer = secs => {
+    clearInterval(timer);
+    const tick = () => { $('timer').textContent = fmt(--secs); if (secs <= 0) clearInterval(timer); };
+    $('timer').textContent = fmt(secs);
+    timer = setInterval(tick, 1000);
+  };
+
+  $('apikey').value = localStorage.getItem(KEY) || '';
+  $('apikey').addEventListener('input', () => localStorage.setItem(KEY, $('apikey').value));
+
+  $('btn-create').onclick = async () => {
+    $('create-msg').className = 'msg';
+    $('create-msg').textContent = '创建中…';
+    $('btn-create').disabled = true;
+    try {
+      const d = await api('/v1/instances', {
+        method: 'POST',
+        body: JSON.stringify({ ttlHours: parseInt($('ttl').value, 10) }),
+      });
+      $('create-msg').textContent = '创建成功: ' + d.instance.name;
+      await openDetail(d.instance.id);
+      await renderList();
+    } catch (e) {
+      $('create-msg').className = 'msg err';
+      $('create-msg').textContent = e.message;
+    } finally {
+      $('btn-create').disabled = false;
+    }
+  };
+
+  $('btn-copy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText($('d-derpmap').value);
+      $('detail-msg').className = 'msg';
+      $('detail-msg').textContent = '已复制';
+    } catch (e) {
+      $('d-derpmap').select();
+      document.execCommand('copy');
+      $('detail-msg').className = 'msg';
+      $('detail-msg').textContent = '已复制(手动选中区域)';
+    }
+  };
+
+  $('btn-delete').onclick = async () => {
+    if (!current) return;
+    if (!confirm('确认删除实例 ' + current.instance.name + '?容器将被立即回收。')) return;
+    try {
+      await api('/v1/instances/' + encodeURIComponent(current.instance.id), { method: 'DELETE' });
+      $('detail-card').hidden = true;
+      current = null;
+      await renderList();
+    } catch (e) {
+      $('detail-msg').className = 'msg err';
+      $('detail-msg').textContent = e.message;
+    }
+  };
+
+  // 状态轮询。
+  setInterval(async () => {
+    if (!current) return;
+    try {
+      const d = await api('/v1/instances/' + encodeURIComponent(current.instance.id));
+      const state = $('d-state');
+      state.textContent = d.containerState;
+      state.className = 'pill ' + (d.containerState === 'running' ? 'up' : 'down');
+      startTimer(d.secondsRemaining);
+    } catch (e) { /* 轮询失败静默,下次再试 */ }
+  }, 10000);
+
+  renderList().catch(() => {});
+})();
+</script>
+</body>
+</html>

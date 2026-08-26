@@ -1,0 +1,6 @@
+# 本地镜像导出
+*.tar
+derp-orch.tar
+
+# 本地环境配置
+.claude/settings.local.json

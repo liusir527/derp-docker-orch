@@ -1,0 +1,62 @@
+# DERP 容器 SaaS 平台部署。
+# 用法:
+#   export RELAY_BASE_DOMAIN=wh.easylan.site
+#   export ADMIN_API_KEY=<强随机密钥>
+#   #   2. BT-nginx 已配站点 server_name *.relay.<base> → 127.0.0.1:1443
+#   docker compose -f deploy/docker-compose.yml up -d
+# 前置:
+#   1. 宝塔面板已签发 *.relay.<base> 证书到 ${CERTS_DIR:-/etc/derp-certs}
+#   2. BT 防火墙放行 ${DERP_PORT:-1443}
+services:
+  nginx-proxy:
+    image: jwilder/nginx-proxy:1.11.6
+    container_name: nginx-proxy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1443:80"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+    networks: [orch-net]
+
+  platformd:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: derp-orch:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - orch-data:/data
+      - ${CERTS_DIR:-/etc/derp-certs}:/etc/derp-certs:rw
+    environment:
+      RELAY_BASE_DOMAIN: ${RELAY_BASE_DOMAIN:?RELAY_BASE_DOMAIN 必填}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?ADMIN_API_KEY 必填}
+      DEFAULT_TTL_HOURS: ${DEFAULT_TTL_HOURS:-24}
+      REGION_ID_BASE: ${REGION_ID_BASE:-900}
+      STUN_PORT_BASE: ${STUN_PORT_BASE:-3478}
+      DERP_PORT: ${DERP_PORT:-443}
+      DOCKER_HOST: unix:///var/run/docker.sock
+      CERTS_DIR: /etc/derp-certs
+      DOCKER_NETWORK: orch-net
+      VERIFY_BASE_URL: http://platformd:8080
+      DB_PATH: /data/derp-orch.db
+      CERT_DNS_PROVIDER: ${CERT_DNS_PROVIDER:-dnspod}
+      CERT_DNSPOD_API_ID: ${CERT_DNSPOD_API_ID:-}
+      CERT_DNSPOD_API_TOKEN: ${CERT_DNSPOD_API_TOKEN:-}
+      CERT_EMAIL: ${CERT_EMAIL:-admin@${RELAY_BASE_DOMAIN}}
+      CERT_RENEW_BEFORE_DAYS: ${CERT_RENEW_BEFORE_DAYS:-30}
+    restart: unless-stopped
+    networks: [orch-net]
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  orch-net:
+    name: orch-net
+
+volumes:
+  orch-data:
