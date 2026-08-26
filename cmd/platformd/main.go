@@ -15,10 +15,13 @@ import (
 	"time"
 
 	"derp-orch/internal/api"
+	"derp-orch/internal/auth"
+	"derp-orch/internal/captcha"
 	"derp-orch/internal/cert"
 	"derp-orch/internal/config"
 	dockerpkg "derp-orch/internal/docker"
 	"derp-orch/internal/lifecycle"
+	"derp-orch/internal/limits"
 	"derp-orch/internal/store"
 )
 
@@ -62,6 +65,36 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// 验证码 + admin 认证 + 资源配额。
+	captchaStore := captcha.New()
+	authmgr := auth.New(auth.Options{
+		Username:       cfg.AdminUsername,
+		Password:       cfg.AdminPassword,
+		SessionTTL:     cfg.SessionTTL,
+		LoginRateLimit: cfg.LoginIPRateLimit,
+		LoginWindow:    time.Duration(cfg.LoginIPWindowSeconds) * time.Second,
+		MaxFails:       cfg.LoginMaxFails,
+		LockDuration:   time.Duration(cfg.LoginLockMinutes) * time.Minute,
+	})
+	checker := limits.New(limits.Options{
+		MaxContainers:      cfg.MaxContainers,
+		MemoryWatermarkPct: cfg.MemoryWatermarkPct,
+		CPUWatermarkPct:    cfg.CPUWatermarkPct,
+	}, orch, st)
+	// 周期清理过期验证码。
+	go func() {
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				captchaStore.Cleanup()
+			}
+		}
+	}()
+
 	// 证书管理:启动后首次签发(若缺) + 后台续期。续期后回调:重启所有 derper 容器(进程内缓存证书)。
 	certEmail := cfg.CertEmail
 	if certEmail == "" {
@@ -102,7 +135,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: api.New(cfg, st, orch, sweep),
+		Handler: api.New(cfg, st, orch, sweep, captchaStore, authmgr, checker),
 	}
 
 	go func() {

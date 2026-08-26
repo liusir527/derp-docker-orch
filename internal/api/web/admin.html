@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DERP 管理面板</title>
+<style>
+  :root {
+    --bg: #0e1116; --surface: #161b24; --surface-2: #1d2430;
+    --text: #e6eaf0; --muted: #8b94a3; --accent: #4cc9a0;
+    --danger: #f4706f; --warn: #f0b75e; --border: #2a3342;
+    --mono: "SF Mono", "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 2rem 1rem; max-width: 980px; margin: 0 auto;
+  }
+  header { display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 1.5rem; letter-spacing: -0.02em; }
+  header p { color: var(--muted); margin-top: .2rem; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.4rem; margin-top: 1.4rem;
+  }
+  .card h2 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: .9rem; }
+  input, select, button { font: inherit; }
+  input, select {
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: .55rem .7rem;
+  }
+  input { width: 100%; }
+  button {
+    border: 0; border-radius: 8px; padding: .55rem 1.1rem; cursor: pointer;
+    background: var(--accent); color: #08120e; font-weight: 600;
+  }
+  button.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: var(--danger); color: #1a0505; }
+  .msg { font-size: .85rem; margin-top: .5rem; min-height: 1.2em; }
+  .msg.err { color: var(--danger); }
+  .row { display: flex; gap: .8rem; align-items: flex-end; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 130px; }
+  label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: .3rem; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .8rem; }
+  .stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: .8rem 1rem; }
+  .stat .n { font-size: 1.5rem; font-weight: 700; font-family: var(--mono); }
+  .stat .l { font-size: .75rem; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; margin-top: .5rem; }
+  th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--border); font-size: .85rem; }
+  th { color: var(--muted); font-weight: 600; }
+  td.mono { font-family: var(--mono); font-size: .82rem; }
+  .pill { display: inline-block; font-size: .72rem; padding: .1rem .5rem; border-radius: 99px; }
+  .pill.unused { background: #123528; color: var(--accent); }
+  .pill.used { background: #3a3434; color: var(--muted); }
+  .pill.up { background: #123528; color: var(--accent); }
+  .pill.down { background: #3a1c1c; color: var(--danger); }
+  .warnbar { background: #33280f; border: 1px solid #6b5520; color: var(--warn); border-radius: 8px; padding: .6rem .9rem; margin-top: .8rem; font-size: .85rem; }
+  .hidden { display: none; }
+  #captcha-img { border: 1px solid var(--border); border-radius: 8px; height: 46px; cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>DERP 管理面板</h1>
+    <p>兑换码管理 · 资源监控 · 审计日志</p>
+  </div>
+  <button class="secondary hidden" id="btn-logout">退出</button>
+</header>
+
+<!-- 登录 -->
+<div class="card" id="login-card">
+  <h2>管理员登录</h2>
+  <div class="row">
+    <div><label for="u">用户名</label><input id="u" value="admin" autocomplete="username"></div>
+    <div><label for="p">密码</label><input type="password" id="p" autocomplete="current-password"></div>
+  </div>
+  <div class="row" style="margin-top:.8rem">
+    <div style="flex:2"><label for="c">验证码</label><input id="c" autocomplete="off"></div>
+    <div style="flex:1"><label>点击刷新</label><img id="captcha-img" alt="验证码"></div>
+  </div>
+  <button id="btn-login">登录</button>
+  <p class="msg err" id="login-msg"></p>
+</div>
+
+<!-- 主面板 -->
+<div id="panel" class="hidden">
+  <!-- 统计 -->
+  <div class="card">
+    <h2>平台概览</h2>
+    <div class="stats" id="stats-grid"></div>
+    <div id="warnbar" class="warnbar hidden"></div>
+  </div>
+
+  <!-- 建码 -->
+  <div class="card">
+    <h2>批量创建兑换码</h2>
+    <div class="row">
+      <div><label for="count">数量</label><input type="number" id="count" value="10" min="1" max="1000"></div>
+      <div><label for="dv">时长</label><input type="number" id="dv" value="30" min="1"></div>
+      <div><label for="du">单位</label>
+        <select id="du">
+          <option value="day">天</option>
+          <option value="month">月</option>
+          <option value="year">年</option>
+        </select>
+      </div>
+      <div><label for="prefix">前缀(可选)</label><input id="prefix" placeholder="默认 DERP,≤8 位"></div>
+      <div><label for="note">备注(可选)</label><input id="note"></div>
+    </div>
+    <button id="btn-create">生成兑换码</button>
+    <p class="msg" id="create-msg"></p>
+  </div>
+
+  <!-- 码列表 -->
+  <div class="card">
+    <h2>兑换码列表</h2>
+    <div class="row" style="margin-bottom:.5rem">
+      <div style="max-width:180px">
+        <select id="filter">
+          <option value="all">全部</option>
+          <option value="unused" selected>未使用</option>
+          <option value="used">已使用</option>
+        </select>
+      </div>
+      <div><button class="secondary" id="btn-export-txt">导出 .txt</button></div>
+      <div><button class="secondary" id="btn-export-csv">导出 .csv</button></div>
+    </div>
+    <table>
+      <thead><tr><th>兑换码</th><th>时长</th><th>状态</th><th>使用实例</th><th>创建时间</th></tr></thead>
+      <tbody id="codes-body"></tbody>
+    </table>
+  </div>
+
+  <!-- 实例 -->
+  <div class="card">
+    <h2>运行实例与资源</h2>
+    <table>
+      <thead><tr><th>实例</th><th>子域名</th><th>状态</th><th>CPU%</th><th>内存</th><th>过期时间</th></tr></thead>
+      <tbody id="inst-body"></tbody>
+    </table>
+  </div>
+
+  <!-- 审计 -->
+  <div class="card">
+    <h2>审计日志</h2>
+    <table>
+      <thead><tr><th>时间</th><th>类型</th><th>兑换码</th><th>实例</th><th>详情</th></tr></thead>
+      <tbody id="audit-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let captchaId = null;
+  setInterval(() => { if (!$('login-card').classList.contains('hidden')) loadCaptcha(); }, 300000);
+
+  const api = (path, opts = {}) =>
+    fetch(path, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    }).then(async res => {
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 401) { showLogin(); throw new Error('会话已过期,请重新登录'); }
+      if (!res.ok || body.ok === false) throw new Error(body.error || ('HTTP ' + res.status));
+      return body.data;
+    });
+
+  const loadCaptcha = () =>
+    fetch('/captcha')
+      .then(r => {
+        const id = r.headers.get('X-Captcha-Id');
+        if (id) captchaId = id;
+        return r.blob();
+      })
+      .then(b => { $('captcha-img').src = URL.createObjectURL(b); })
+      .catch(() => {});
+
+  const showLogin = () => {
+    $('login-card').classList.remove('hidden');
+    $('panel').classList.add('hidden');
+    $('btn-logout').classList.add('hidden');
+    loadCaptcha();
+  };
+
+  const showPanel = () => {
+    $('login-card').classList.add('hidden');
+    $('panel').classList.remove('hidden');
+    $('btn-logout').classList.remove('hidden');
+    refresh();
+  };
+
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  $('btn-login').onclick = async () => {
+    $('login-msg').textContent = '';
+    try {
+      await api('/v1/admin/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: $('u').value.trim(),
+          password: $('p').value,
+          captchaId, captchaText: $('c').value.trim(),
+        }),
+      });
+      showPanel();
+    } catch (e) {
+      $('login-msg').textContent = e.message;
+      $('c').value = '';
+      loadCaptcha();
+    }
+  };
+
+  $('btn-logout').onclick = async () => {
+    try { await api('/v1/admin/logout', { method: 'POST' }); } catch (e) {}
+    showLogin();
+  };
+
+  $('btn-create').onclick = async () => {
+    $('create-msg').textContent = '';
+    try {
+      const d = await api('/v1/admin/codes', {
+        method: 'POST',
+        body: JSON.stringify({
+          count: parseInt($('count').value, 10),
+          durationValue: parseInt($('dv').value, 10),
+          durationUnit: $('du').value,
+          prefix: $('prefix').value.trim(),
+          note: $('note').value.trim(),
+        }),
+      });
+      $('create-msg').textContent = `已生成 ${d.created} 个兑换码`;
+      loadCodes(); loadStats();
+    } catch (e) {
+      $('create-msg').className = 'msg err';
+      $('create-msg').textContent = e.message;
+    }
+  };
+
+  const loadCodes = () => {
+    const status = $('filter').value;
+    return api('/v1/admin/codes?status=' + status + '&limit=100')
+      .then(d => {
+        const tb = $('codes-body');
+        tb.textContent = '';
+        for (const c of d.codes) {
+          const tr = document.createElement('tr');
+          const used = c.usedByInstanceId ? 'used' : 'unused';
+          tr.innerHTML =
+            '<td class="mono">' + esc(c.code) + '</td>' +
+            '<td>' + esc(c.durationValue + ' ' + c.durationUnit) + '</td>' +
+            '<td><span class="pill ' + used + '">' + (used === 'used' ? '已使用' : '未使用') + '</span></td>' +
+            '<td class="mono">' + esc(c.usedByInstanceId || '–') + '</td>' +
+            '<td class="mono">' + esc((c.createdAt || '').replace('T', ' ').slice(0, 16)) + '</td>';
+          tb.appendChild(tr);
+        }
+      });
+  };
+
+  const loadStats = () => {
+    return api('/v1/admin/stats').then(d => {
+      const r = d.resources || {};
+      const mb = b => (b / 1024 / 1024).toFixed(1) + ' MB';
+      const items = [
+        ['容器总数', d.activeInstances + ' / ' + r.maxContainers],
+        ['兑换码', d.codes.unused + ' 未用 · ' + d.codes.used + ' 已用'],
+        ['宿主内存', r.memTotalBytes ? mb(r.memUsedBytes) + ' / ' + mb(r.memTotalBytes) : 'N/A'],
+        ['内存使用率', (r.memPct || 0).toFixed(1) + '%'],
+        ['容器 CPU', (r.cpuUsedPct || 0).toFixed(1) + '%'],
+      ];
+      const grid = $('stats-grid');
+      grid.textContent = '';
+      for (const [l, n] of items) {
+        const div = document.createElement('div');
+        div.className = 'stat';
+        div.innerHTML = '<div class="n">' + esc(n) + '</div><div class="l">' + esc(l) + '</div>';
+        grid.appendChild(div);
+      }
+      const wb = $('warnbar');
+      if ((r.memPct || 0) > 75 || (r.cpuUsedPct || 0) > 75 || d.activeInstances >= r.maxContainers) {
+        wb.classList.remove('hidden');
+        wb.textContent = '警告: 资源水位偏高或容器数接近上限,新兑换将被拒绝以保护系统。';
+      } else {
+        wb.classList.add('hidden');
+      }
+    });
+  };
+
+  const loadInstances = () => {
+    return api('/v1/admin/instances').then(d => {
+      const tb = $('inst-body');
+      tb.textContent = '';
+      for (const i of d.instances) {
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td class="mono">' + esc(i.name) + '</td>' +
+          '<td class="mono">' + esc(i.subdomain) + '</td>' +
+          '<td><span class="pill ' + (i.containerState === 'running' ? 'up' : 'down') + '">' + esc(i.containerState) + '</span></td>' +
+          '<td>' + (i.cpuPct || 0).toFixed(1) + '</td>' +
+          '<td class="mono">' + ((i.memBytes || 0) / 1024 / 1024).toFixed(1) + ' MB</td>' +
+          '<td class="mono">' + esc((i.expiresAt || '').replace('T', ' ').slice(0, 16)) + '</td>';
+        tb.appendChild(tr);
+      }
+    });
+  };
+
+  const loadAudit = () => {
+    return api('/v1/admin/audit?limit=100').then(d => {
+      const tb = $('audit-body');
+      tb.textContent = '';
+      for (const l of d.logs) {
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td class="mono">' + esc(l.createdAt) + '</td>' +
+          '<td>' + esc(l.kind) + '</td>' +
+          '<td class="mono">' + esc(l.code || '–') + '</td>' +
+          '<td class="mono">' + esc(l.instanceId || '–') + '</td>' +
+          '<td>' + esc(l.detail || '') + '</td>';
+        tb.appendChild(tr);
+      }
+    });
+  };
+
+  const refresh = () => {
+    loadCodes().catch(() => {}); loadStats().catch(() => {}); loadInstances().catch(() => {}); loadAudit().catch(() => {});
+  };
+
+  const exportCodes = format => {
+    const status = $('filter').value;
+    window.open('/v1/admin/codes/export?status=' + status + '&format=' + format, '_blank');
+  };
+  $('btn-export-txt').onclick = () => exportCodes('txt');
+  $('btn-export-csv').onclick = () => exportCodes('csv');
+  $('filter').onchange = loadCodes;
+  $('captcha-img').onclick = loadCaptcha;
+
+  // 启动:尝试直接进面板(已有会话),失败则显示登录。
+  api('/v1/admin/stats').then(showPanel).catch(showLogin);
+})();
+</script>
+</body>
+</html>

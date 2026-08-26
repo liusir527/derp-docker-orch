@@ -4,3 +4,6 @@ derp-orch.tar
 
 # 本地环境配置
 .claude/settings.local.json
+
+# 代码索引缓存
+.codegraph/

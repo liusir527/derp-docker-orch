@@ -1,7 +1,9 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 
 	_ "modernc.org/sqlite"
@@ -24,6 +26,33 @@ var migrations = []string{
 	)`,
 	// v2: 新增 host_ip 字段(nginx 直连用)。
 	`ALTER TABLE instances ADD COLUMN host_ip TEXT NOT NULL DEFAULT ''`,
+	// v3: 兑换码表 + 审计日志表。
+	`CREATE TABLE IF NOT EXISTS redeem_codes (
+		id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+		code                TEXT NOT NULL UNIQUE,
+		duration_value      INTEGER NOT NULL,
+		duration_unit       TEXT NOT NULL CHECK(duration_unit IN ('day','month','year')),
+		disabled            INTEGER NOT NULL DEFAULT 0,
+		used_by_instance_id TEXT,
+		used_at             TEXT,
+		created_by          TEXT NOT NULL DEFAULT 'admin',
+		created_at          TEXT NOT NULL,
+		reserved_token      TEXT,
+		reserved_at         TEXT,
+		note                TEXT NOT NULL DEFAULT ''
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_redeem_codes_created_at ON redeem_codes(created_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_redeem_codes_used_at ON redeem_codes(used_at)`,
+	`CREATE TABLE IF NOT EXISTS audit_logs (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		kind        TEXT NOT NULL,
+		instance_id TEXT,
+		code        TEXT,
+		username    TEXT,
+		detail      TEXT,
+		created_at  TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at)`,
 }
 
 // Store SQLite 存储。并发安全由 database/sql 连接池保证。
@@ -52,6 +81,15 @@ func Open(path string) (*Store, error) {
 
 // Close 关闭数据库。
 func (s *Store) Close() error { return s.db.Close() }
+
+// randomToken 生成 n 字节随机 hex 令牌(预留/session 用)。
+func randomToken(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("生成随机令牌: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
 
 func (s *Store) migrate() error {
 	var ver int

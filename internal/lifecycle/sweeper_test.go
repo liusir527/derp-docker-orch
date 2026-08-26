@@ -22,6 +22,9 @@ func (f *fakeOrch) RemoveNode(ctx context.Context, i *store.Instance) error {
 func (f *fakeOrch) NodeState(ctx context.Context, i *store.Instance) (docker.ContainerState, error) {
 	return docker.StateRunning, nil
 }
+func (f *fakeOrch) Stats(ctx context.Context) (map[string]*docker.ContainerStat, error) {
+	return map[string]*docker.ContainerStat{}, nil
+}
 
 func TestSweepOnce_RemovesExpired(t *testing.T) {
 	st, err := store.Open(":memory:")

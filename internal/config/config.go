@@ -52,6 +52,32 @@ type Config struct {
 	CertEmail string
 	// CertRenewBeforeDays 距到期多少天续期,默认 30。
 	CertRenewBeforeDays int
+	// AdminUsername admin 登录用户名,默认 admin。
+	AdminUsername string
+	// AdminPassword admin 登录密码,必填(与 AdminAPIKey 并存:API key 走 Bearer,密码走 session 面板)。
+	AdminPassword string
+	// SessionTTL admin 会话有效期,默认 12h。
+	SessionTTL time.Duration
+	// MaxContainers 活跃容器上限(资源配额),默认 100。
+	MaxContainers int
+	// MemoryWatermarkPct 宿主内存使用率水位%,超限拒建容器,默认 80。
+	MemoryWatermarkPct float64
+	// CPUWatermarkPct 容器总 CPU% 水位,超限拒建容器,默认 80。
+	CPUWatermarkPct float64
+	// CaptchaTTLSeconds 验证码有效期秒,默认 300。
+	CaptchaTTLSeconds int
+	// RedeemIPRateLimit 兑换接口每窗口每 IP 限次,默认 5。
+	RedeemIPRateLimit int
+	// RedeemIPWindowSeconds 兑换限速窗口秒,默认 60。
+	RedeemIPWindowSeconds int
+	// LoginIPRateLimit 登录接口每窗口每 IP 限次,默认 10。
+	LoginIPRateLimit int
+	// LoginIPWindowSeconds 登录限速窗口秒,默认 60。
+	LoginIPWindowSeconds int
+	// LoginMaxFails 连续失败锁定阈值,默认 5。
+	LoginMaxFails int
+	// LoginLockMinutes 锁定时长分钟,默认 15。
+	LoginLockMinutes int
 }
 
 // Load 从环境变量读取配置,缺失必填项返回错误。
@@ -75,6 +101,19 @@ func Load() (*Config, error) {
 		CertDNSPodToken: os.Getenv("CERT_DNSPOD_API_TOKEN"),
 		CertEmail:       strEnv("CERT_EMAIL", ""),
 		CertRenewBeforeDays: intEnv("CERT_RENEW_BEFORE_DAYS", 30),
+		AdminUsername:     strEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword:     os.Getenv("ADMIN_PASSWORD"),
+		SessionTTL:        durEnv("SESSION_TTL_HOURS", 12, time.Hour),
+		MaxContainers:     intEnv("MAX_CONTAINERS", 100),
+		MemoryWatermarkPct: floatEnv("MEMORY_WATERMARK_PERCENT", 80),
+		CPUWatermarkPct:    floatEnv("CPU_WATERMARK_PERCENT", 80),
+		CaptchaTTLSeconds:  intEnv("CAPTCHA_TTL_SECONDS", 300),
+		RedeemIPRateLimit:  intEnv("REDEEM_IP_RATE_LIMIT", 5),
+		RedeemIPWindowSeconds: intEnv("REDEEM_IP_WINDOW_SECONDS", 60),
+		LoginIPRateLimit:   intEnv("LOGIN_IP_RATE_LIMIT", 10),
+		LoginIPWindowSeconds: intEnv("LOGIN_IP_WINDOW_SECONDS", 60),
+		LoginMaxFails:      intEnv("LOGIN_MAX_FAILS", 5),
+		LoginLockMinutes:   intEnv("LOGIN_LOCK_MINUTES", 15),
 	}
 
 	var missing []string
@@ -83,6 +122,9 @@ func Load() (*Config, error) {
 	}
 	if c.AdminAPIKey == "" {
 		missing = append(missing, "ADMIN_API_KEY")
+	}
+	if c.AdminPassword == "" {
+		missing = append(missing, "ADMIN_PASSWORD")
 	}
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("缺失必填环境变量: %v", missing)
@@ -93,6 +135,16 @@ func Load() (*Config, error) {
 func strEnv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func floatEnv(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		var n float64
+		if _, err := fmt.Sscanf(v, "%f", &n); err == nil {
+			return n
+		}
 	}
 	return def
 }

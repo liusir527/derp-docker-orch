@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DERP 中继兑换</title>
+<style>
+  :root {
+    --bg: #0e1116; --surface: #161b24; --surface-2: #1d2430;
+    --text: #e6eaf0; --muted: #8b94a3; --accent: #4cc9a0;
+    --danger: #f4706f; --border: #2a3342;
+    --mono: "SF Mono", "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 2.5rem 1rem; max-width: 720px; margin: 0 auto;
+  }
+  header h1 { font-size: 1.7rem; letter-spacing: -0.02em; }
+  header p { color: var(--muted); margin-top: .2rem; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.4rem; margin-top: 1.4rem;
+  }
+  .card h2 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: .9rem; }
+  input, button, textarea { font: inherit; }
+  input[type=text] {
+    width: 100%; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: .7rem .8rem;
+    font-family: var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  }
+  button {
+    border: 0; border-radius: 8px; padding: .6rem 1.2rem; cursor: pointer;
+    background: var(--accent); color: #08120e; font-weight: 600; margin-top: .8rem;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+  .msg { font-size: .85rem; margin-top: .6rem; min-height: 1.2em; }
+  .msg.err { color: var(--danger); }
+  .key { color: var(--muted); font-size: .8rem; margin-top: .9rem; }
+  .val { font-family: var(--mono); font-size: .95rem; word-break: break-all; }
+  textarea {
+    width: 100%; min-height: 200px; resize: vertical;
+    background: #0a0d12; color: var(--accent); border: 1px solid var(--border);
+    border-radius: 8px; padding: .7rem; font-family: var(--mono); font-size: 12.5px;
+  }
+  .pill { display: inline-block; font-size: .75rem; padding: .1rem .5rem; border-radius: 99px; }
+  .pill.up { background: #123528; color: var(--accent); }
+  #timer { font-family: var(--mono); color: var(--accent); font-size: 1.1rem; }
+  details { margin-top: 1rem; border: 1px solid var(--border); border-radius: 8px; padding: .8rem 1rem; }
+  summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+  details ol { margin: .8rem 0 .2rem 1.2rem; }
+  details code { background: var(--surface-2); padding: .1rem .4rem; border-radius: 4px; font-family: var(--mono); font-size: .85em; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DERP 中继兑换</h1>
+  <p>输入兑换码 → 创建专属 DERP 中继 → 复制 derpMap 粘贴进 Tailscale ACL。</p>
+</header>
+
+<div class="card">
+  <h2>兑换中继</h2>
+  <input type="text" id="code" placeholder="输入兑换码,如 DERP-XXXX-XXXX" autocomplete="off">
+  <button id="btn-redeem">兑换</button>
+  <p class="msg" id="redeem-msg"></p>
+</div>
+
+<div class="card" id="result-card" hidden>
+  <h2>中继已就绪</h2>
+  <div class="key">子域名</div>
+  <div class="val" id="r-subdomain"></div>
+  <div class="key">容器状态 <span class="pill up" id="r-state">running</span></div>
+  <div class="key">剩余有效期 <span id="timer">–</span></div>
+  <div class="key">derpMap(粘贴进 ACL policy 文件)</div>
+  <textarea id="r-derpmap" readonly></textarea>
+  <button id="btn-copy" class="secondary">复制 derpMap</button>
+  <p class="msg" id="detail-msg"></p>
+
+  <details>
+    <summary>使用教程</summary>
+    <ol>
+      <li>复制上方 derpMap JSON。</li>
+      <li>打开 <a href="https://login.tailscale.com/admin/acls" target="_blank" rel="noopener">Tailscale 管理台 → ACL</a>,把 derpMap JSON 粘贴进 policy 文件顶层,保存。</li>
+      <li>节点重启 tailscale:<code>tailscale up</code> 或重启服务。</li>
+      <li>验证:<code>tailscale netcheck</code> 应看到本中继 region;<code>tailscale ping &lt;对端&gt;</code> 输出 <code>via DERP(...)</code> 表示中继生效。</li>
+    </ol>
+  </details>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const api = (path, opts = {}) =>
+    fetch(path, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    }).then(async res => {
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body.ok === false) throw new Error(body.error || ('HTTP ' + res.status));
+      return body.data;
+    });
+
+  let current = null;
+  let timer = null;
+  const fmt = s => {
+    s = Math.max(0, Math.floor(s));
+    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+    return (d ? d + '天 ' : '') + (h ? h + '时 ' : '') + (m ? m + '分 ' : '') + sec + '秒';
+  };
+  const startTimer = secs => {
+    clearInterval(timer);
+    const tick = () => { $('timer').textContent = fmt(--secs); if (secs <= 0) clearInterval(timer); };
+    $('timer').textContent = fmt(secs);
+    timer = setInterval(tick, 1000);
+  };
+
+  $('btn-redeem').onclick = async () => {
+    const code = $('code').value.trim();
+    if (!code) { $('redeem-msg').className = 'msg err'; $('redeem-msg').textContent = '请输入兑换码'; return; }
+    $('redeem-msg').className = 'msg';
+    $('redeem-msg').textContent = '兑换中…';
+    $('btn-redeem').disabled = true;
+    try {
+      const d = await api('/v1/redeem/redeem', { method: 'POST', body: JSON.stringify({ code }) });
+      current = d;
+      $('result-card').hidden = false;
+      $('r-subdomain').textContent = d.instance.subdomain;
+      $('r-derpmap').value = JSON.stringify(d.derpMap, null, 2);
+      startTimer(d.secondsRemaining);
+      $('redeem-msg').textContent = '兑换成功: ' + d.instance.name;
+      $('result-card').scrollIntoView({ behavior: 'smooth' });
+    } catch (e) {
+      $('redeem-msg').className = 'msg err';
+      $('redeem-msg').textContent = e.message;
+    } finally {
+      $('btn-redeem').disabled = false;
+    }
+  };
+
+  $('code').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-redeem').click(); });
+
+  $('btn-copy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText($('r-derpmap').value);
+      $('detail-msg').textContent = '已复制';
+    } catch (e) {
+      $('r-derpmap').select();
+      document.execCommand('copy');
+      $('detail-msg').textContent = '已复制(手动选中区域)';
+    }
+  };
+})();
+</script>
+</body>
+</html>

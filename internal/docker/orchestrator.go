@@ -36,6 +36,14 @@ type Orchestrator interface {
 	EnsureNode(ctx context.Context, i *store.Instance) error
 	RemoveNode(ctx context.Context, i *store.Instance) error
 	NodeState(ctx context.Context, i *store.Instance) (ContainerState, error)
+	Stats(ctx context.Context) (map[string]*ContainerStat, error)
+}
+
+// ContainerStat 单个容器资源统计。
+type ContainerStat struct {
+	Container string  `json:"container"`
+	CPUPct    float64 `json:"cpuPct"`
+	MemBytes  uint64  `json:"memBytes"`
 }
 
 // Options Docker 编排器配置。

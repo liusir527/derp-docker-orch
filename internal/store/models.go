@@ -23,3 +23,32 @@ type Instance struct {
 func (i *Instance) Expired(now time.Time) bool {
 	return !i.ExpiresAt.After(now)
 }
+
+// RedeemCode 一个兑换码。一次性消耗,used_at/used_by_instance_id 标记使用记录。
+// 预留机制:reserved_token 抢占后 15 分钟内未消费则自动释放(见 RedeemStore)。
+type RedeemCode struct {
+	ID                int64      `json:"id"`
+	Code              string     `json:"code"`
+	DurationValue     int        `json:"durationValue"`
+	DurationUnit      string     `json:"durationUnit"` // day | month | year
+	Disabled          bool       `json:"disabled"`
+	UsedByInstanceID  *string    `json:"usedByInstanceId,omitempty"`
+	UsedAt            *time.Time `json:"usedAt,omitempty"`
+	CreatedBy         string     `json:"createdBy"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	Note              string     `json:"note,omitempty"`
+}
+
+// Used 是否已被使用。
+func (c *RedeemCode) Used() bool { return c.UsedAt != nil }
+
+// AuditLog 操作审计日志。时间精确到分钟展示。
+type AuditLog struct {
+	ID         int64     `json:"id"`
+	Kind       string    `json:"kind"` // redeem | create_code | delete_instance
+	InstanceID string    `json:"instanceId,omitempty"`
+	Code       string    `json:"code,omitempty"`
+	Username   string    `json:"username,omitempty"`
+	Detail     string    `json:"detail,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
