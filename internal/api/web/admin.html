@@ -82,6 +82,9 @@
 
   .hidden { display: none; }
 
+  /* 特异性必须高于 .modal-mask 的 display:flex,否则 hidden 被覆盖,弹窗关不掉。 */
+  .modal-mask.hidden { display: none; }
+
   /* 模态框:遮罩 + 居中卡片,复用 :root 变量,无新依赖。 */
   .modal-mask {
     position: fixed; inset: 0; background: rgba(8, 12, 18, .72);
@@ -120,7 +123,7 @@
 <body>
 <header>
   <div>
-    <h1>DERP 管理面板</h1>
+    <h1>DERP 管理面板 <span style="font-size:0.7em;color:var(--muted);font-weight:400">v4</span></h1>
     <p>兑换码管理 · 资源监控 · 审计日志</p>
   </div>
   <button class="secondary hidden" id="btn-logout">退出</button>
@@ -252,16 +255,22 @@
   const $ = id => document.getElementById(id);
   let captchaId = null;
 
-  const api = (path, opts = {}) =>
-    fetch(path, {
+  const api = (path, opts = {}) => {
+    // 请求超时兜底:后端挂起时不冻结 UI(如删除"删除中…"状态)。
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    return fetch(path, {
       ...opts,
+      signal: ctrl.signal,
       headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
     }).then(async res => {
+      clearTimeout(timer);
       const body = await res.json().catch(() => ({}));
       if (res.status === 401) { showLogin(); throw new Error('会话已过期,请重新登录'); }
       if (!res.ok || body.ok === false) throw new Error(body.error || ('HTTP ' + res.status));
       return body.data;
-    });
+    }).finally(() => clearTimeout(timer));
+  };
 
   const loadCaptcha = () =>
     fetch('/captcha')
@@ -459,13 +468,19 @@
 
   // 模态框 shell 一次性创建。
   let modalMask = null;
+  const closeModal = () => { if (modalMask) modalMask.classList.add('hidden'); };
   const ensureModalShell = () => {
     if (modalMask) return modalMask;
     modalMask = document.createElement('div');
     modalMask.className = 'modal-mask hidden';
-    modalMask.addEventListener('click', e => { if (e.target === modalMask) closeModal(); });
+    // 事件委托:点遮罩/点 data-close 按钮/按 Esc → 关闭。
+    modalMask.addEventListener('click', e => {
+      if (e.target === modalMask) { closeModal(); return; }
+      const closeBtn = e.target.closest('[data-close]');
+      if (closeBtn) closeModal();
+    });
     document.body.appendChild(modalMask);
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modalMask.classList.contains('hidden')) closeModal(); });
     return modalMask;
   };
   const openModal = (title, bodyEl, actionEls) => {
@@ -489,7 +504,10 @@
     m.appendChild(card);
     m.classList.remove('hidden');
   };
-  const closeModal = () => { if (modalMask) modalMask.classList.add('hidden'); };
+
+  // 强制关闭兜底:全局 inline 调用,无任何闭包依赖。
+  // 在 HTML 中通过 <button onclick="closeModal()"> 直接使用。
+  window.__closeModal = () => { if (modalMask) modalMask.classList.add('hidden'); };
 
   // 复制降级方案。
   const copyToClipboard = text => {
@@ -518,8 +536,16 @@
   const openDerpMapModal = (id, name) => {
     const body = document.createElement('div');
     body.textContent = '加载中…';
-    // 直接 inline onclick,不依赖 closeModal 闭包传递,避免任何引用丢失。
-    const btnClose = mkBtn('关闭', 'secondary', () => { if (modalMask) modalMask.classList.add('hidden'); });
+    // 关闭按钮:三道保险
+    // 1) inline onclick(HTML 标准)
+    // 2) addEventListener('click')(避免 jsdom/老浏览器 inline 解析问题)
+    // 3) data-close 属性 + modalMask 事件委托(冗余兜底)
+    const btnClose = document.createElement('button');
+    btnClose.textContent = '关闭';
+    btnClose.className = 'secondary';
+    btnClose.setAttribute('onclick', 'window.__closeModal()');
+    btnClose.dataset.close = '1';
+    btnClose.addEventListener('click', window.__closeModal);
     const btnCopy = mkBtn('复制', 'secondary', null, true);
     const btnDl = mkBtn('下载 .json', 'secondary', null, true);
     btnCopy.disabled = true; btnDl.disabled = true;
@@ -572,7 +598,12 @@
     msg.style.minHeight = '1.2em';
     body.appendChild(msg);
 
-    const btnCancel = mkBtn('取消', 'secondary', () => { if (modalMask) modalMask.classList.add('hidden'); });
+    const btnCancel = document.createElement('button');
+    btnCancel.textContent = '取消';
+    btnCancel.className = 'secondary';
+    btnCancel.setAttribute('onclick', 'window.__closeModal()');
+    btnCancel.dataset.close = '1';
+    btnCancel.addEventListener('click', window.__closeModal);
     const btnOk = mkBtn('确认删除', 'danger', null);
     btnOk.disabled = true;
     input.oninput = () => {

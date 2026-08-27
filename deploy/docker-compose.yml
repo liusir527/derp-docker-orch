@@ -29,7 +29,7 @@ services:
     image: derp-orch:latest
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - orch-data:/data
+      - /data/derp-orch:/data
       - ${CERTS_DIR:-/etc/derp-certs}:/etc/derp-certs:rw
     environment:
       RELAY_BASE_DOMAIN: ${RELAY_BASE_DOMAIN:?RELAY_BASE_DOMAIN 必填}
@@ -72,6 +72,3 @@ services:
 networks:
   orch-net:
     name: orch-net
-
-volumes:
-  orch-data:

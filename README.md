@@ -22,6 +22,8 @@ platformd (Go): Web 界面 + 实例 API + sweeper 过期清理 + Docker 编排
 
 前置: 一台有公网 IP 的宿主机、Docker、域名 DNS(通配 A 记录)。
 
+数据目录: SQLite 数据库持久化在宿主机 `/data/derp-orch/`(容器内 `/data` 的 bind mount),删除重建容器数据不丢。
+
 ### 1. 启动 nginx-proxy
 
 ```bash
