@@ -71,7 +71,7 @@
   <h2>中继已就绪</h2>
   <div class="key">子域名</div>
   <div class="val" id="r-subdomain"></div>
-  <div class="key">容器状态 <span class="pill up" id="r-state">running</span></div>
+  <div class="key" id="r-state-row">容器状态 <span class="pill up" id="r-state">running</span></div>
   <div class="key">剩余有效期 <span id="timer">–</span></div>
   <div class="key">derpMap(粘贴进 ACL policy 文件)</div>
   <textarea id="r-derpmap" readonly></textarea>
@@ -115,6 +115,15 @@
     $('timer').textContent = fmt(secs);
     timer = setInterval(tick, 1000);
   };
+  // RFC3339 → "YYYY-MM-DD HH:mm"(本地时区)。
+  const formatTime = iso => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const pad = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+      ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  };
 
   $('btn-redeem').onclick = async () => {
     const code = $('code').value.trim();
@@ -122,14 +131,37 @@
     $('redeem-msg').className = 'msg';
     $('redeem-msg').textContent = '兑换中…';
     $('btn-redeem').disabled = true;
+    // 先发请求再读 body,便于按 HTTP 状态码分支(410/200/201/4xx/5xx)。
     try {
-      const d = await api('/v1/redeem/redeem', { method: 'POST', body: JSON.stringify({ code }) });
+      const res = await fetch('/v1/redeem/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 410) {
+        $('result-card').hidden = true;
+        $('redeem-msg').className = 'msg err';
+        $('redeem-msg').textContent = body.error || '兑换码已过期或中继已清理';
+        return;
+      }
+      if (!res.ok || body.ok === false) {
+        throw new Error(body.error || ('HTTP ' + res.status));
+      }
+      const d = body.data;
       current = d;
       $('result-card').hidden = false;
       $('r-subdomain').textContent = d.instance.subdomain;
       $('r-derpmap').value = JSON.stringify(d.derpMap, null, 2);
+      // 重取(redeemed=true)后端不返回容器状态;隐藏该行避免误导。
+      $('r-state-row').hidden = !!d.redeemed;
       startTimer(d.secondsRemaining);
-      $('redeem-msg').textContent = '兑换成功: ' + d.instance.name;
+      if (d.redeemed) {
+        $('redeem-msg').textContent = '已找回中继: ' + d.instance.subdomain +
+          ' (创建于 ' + formatTime(d.instance.createdAt) + ')';
+      } else {
+        $('redeem-msg').textContent = '兑换成功: ' + d.instance.name;
+      }
       $('result-card').scrollIntoView({ behavior: 'smooth' });
     } catch (e) {
       $('redeem-msg').className = 'msg err';

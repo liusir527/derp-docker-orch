@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -18,7 +19,10 @@ type redeemRequest struct {
 }
 
 // handleRedeem POST /v1/redeem/redeem。
-// 流程: 限速 → 配额检查 → reserve 码 → 建实例(ttl=码时长)→ consume 码。
+// 流程: 限速 → 读码 → 判已用 →
+//   (已用 + 实例在 + 未过期)→ 重取 200 + redeemed=true
+//   (已用 + 实例过期/被删)   → 410
+//   (未用)                  → 配额检查 → reserve 码 → 建实例 → consume 码 → 201 + redeemed=false
 // 任一步失败:release 码 + 补偿删行,不留半状态。
 func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	var req redeemRequest
@@ -29,6 +33,27 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	code := redeem.NormalizeCode(req.Code)
 	if code == "" {
 		writeError(w, http.StatusBadRequest, "请输入兑换码")
+		return
+	}
+
+	// 一次性读码:同时承担"码不存在"与"已用"两种判定。
+	rc, err := s.store.GetRedeemCode(r.Context(), code)
+	if err != nil {
+		if errors.Is(err, store.ErrCodeUnavailable) {
+			writeError(w, http.StatusBadRequest, "兑换码无效或已被使用")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "兑换码处理失败")
+		return
+	}
+	if rc.Disabled {
+		writeError(w, http.StatusBadRequest, "兑换码无效或已被使用")
+		return
+	}
+
+	// 已用码分支:重取 derpMap,只读、不消耗资源,跳过配额。
+	if rc.Used() {
+		s.handleRedeemLookup(w, r, code, rc)
 		return
 	}
 
@@ -61,13 +86,13 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 读取码时长。
-	rc, err := s.store.GetRedeemCodeByToken(r.Context(), token)
+	rcc, err := s.store.GetRedeemCodeByToken(r.Context(), token)
 	if err != nil {
 		release()
 		writeError(w, http.StatusBadRequest, "兑换码无效或已被使用")
 		return
 	}
-	expiry, err := redeem.ExpiryFrom(time.Now(), rc.DurationValue, rc.DurationUnit)
+	expiry, err := redeem.ExpiryFrom(time.Now(), rcc.DurationValue, rcc.DurationUnit)
 	if err != nil {
 		release()
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -96,11 +121,7 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	derpMap, err := derp.MapForInstance(inst, s.cfg.DERPPort)
-	if err != nil {
-		log.Printf("[redeem] 生成 derpMap 失败: %v", err)
-		derpMap = []byte("{}")
-	}
+	derpMap, _ := s.buildDerpMap(r.Context(), inst)
 
 	// 审计:码→实例绑定 + 创建/过期时间(分钟级)。
 	_ = s.store.AddAudit(r.Context(), store.AuditLog{
@@ -113,8 +134,50 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[redeem] 兑换成功 code=%s instance=%s expires=%s", code, inst.ID, inst.ExpiresAt.Format(time.RFC3339))
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"instance":         inst,
-		"derpMap":          json.RawMessage(derpMap),
+		"derpMap":          derpMap,
 		"expiresAt":        inst.ExpiresAt,
 		"secondsRemaining": int64(time.Until(inst.ExpiresAt).Seconds()),
+		"redeemed":         false,
 	})
+}
+
+// handleRedeemLookup 已用码重取分支。容器不存在或已过期 → 410 Gone。
+// 重取是只读操作,不写审计。
+func (s *Server) handleRedeemLookup(w http.ResponseWriter, r *http.Request, code string, rc *store.RedeemCode) {
+	if rc.UsedByInstanceID == nil {
+		// 防御:schema 约束 used_by_instance_id 与 used_at 同步写入,理论上不应出现。
+		log.Printf("[redeem] 码 %s 状态异常:used_at 非空但 used_by_instance_id 为空", code)
+		writeError(w, http.StatusInternalServerError, "兑换码处理失败")
+		return
+	}
+	inst, err := s.store.GetInstance(r.Context(), *rc.UsedByInstanceID)
+	if err != nil {
+		// 实例被管理员删除 → 等同过期语义。
+		writeError(w, http.StatusGone, "兑换码对应的中继已过期或已被清理")
+		return
+	}
+	if inst.Expired(time.Now()) {
+		writeError(w, http.StatusGone, "兑换码对应的中继已过期或已被清理")
+		return
+	}
+
+	derpMap, _ := s.buildDerpMap(r.Context(), inst)
+	log.Printf("[redeem] 重取已用码 code=%s instance=%s expires=%s", code, inst.ID, inst.ExpiresAt.Format(time.RFC3339))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"instance":         inst,
+		"derpMap":          derpMap,
+		"expiresAt":        inst.ExpiresAt,
+		"secondsRemaining": int64(time.Until(inst.ExpiresAt).Seconds()),
+		"redeemed":         true,
+	})
+}
+
+// buildDerpMap 序列化 derpMap JSON,失败回退空对象(沿用原 redeem 行为)。
+func (s *Server) buildDerpMap(_ context.Context, inst *store.Instance) (json.RawMessage, error) {
+	m, err := derp.MapForInstance(inst, s.cfg.DERPPort)
+	if err != nil {
+		log.Printf("[redeem] 生成实例 %s derpMap 失败: %v", inst.ID, err)
+		return json.RawMessage("{}"), nil
+	}
+	return json.RawMessage(m), nil
 }

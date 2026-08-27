@@ -82,6 +82,33 @@
 
   .hidden { display: none; }
 
+  /* 模态框:遮罩 + 居中卡片,复用 :root 变量,无新依赖。 */
+  .modal-mask {
+    position: fixed; inset: 0; background: rgba(8, 12, 18, .72);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 4rem 1rem 1rem; z-index: 100;
+  }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.2rem 1.3rem; max-width: 640px; width: 100%;
+    box-shadow: 0 12px 40px rgba(0,0,0,.5);
+  }
+  .modal h3 { font-size: 1.05rem; margin-bottom: .8rem; word-break: break-all; }
+  .modal .body { margin-bottom: 1rem; }
+  .modal .actions { display: flex; gap: .6rem; justify-content: flex-end; flex-wrap: wrap; }
+  .modal pre {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: .8rem; max-height: 320px; overflow: auto;
+    font-family: var(--mono); font-size: .8rem; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+  }
+  .modal .confirm-target {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: .15rem .45rem; font-family: var(--mono);
+  }
+  .modal .msg { margin-top: .5rem; }
+  .row-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+  .row-actions button { padding: .35rem .7rem; font-size: .8rem; }
+
   @media (max-width: 640px) {
     body { padding: 1rem .75rem; }
     .form-grid { grid-template-columns: 1fr; }
@@ -188,7 +215,7 @@
     <h2>运行实例与资源</h2>
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>实例</th><th>子域名</th><th>状态</th><th>CPU%</th><th>内存</th><th>过期时间</th></tr></thead>
+      <thead><tr><th>实例</th><th>子域名</th><th>状态</th><th>CPU%</th><th>内存</th><th>过期时间</th><th>操作</th></tr></thead>
       <tbody id="inst-body"></tbody>
     </table>
     </div>
@@ -396,7 +423,11 @@
           '<td><span class="pill ' + (i.containerState === 'running' ? 'up' : 'down') + '">' + esc(i.containerState) + '</span></td>' +
           '<td>' + (i.cpuPct || 0).toFixed(1) + '</td>' +
           '<td class="mono">' + ((i.memBytes || 0) / 1024 / 1024).toFixed(1) + ' MB</td>' +
-          '<td class="mono">' + esc((i.expiresAt || '').replace('T', ' ').slice(0, 16)) + '</td>';
+          '<td class="mono">' + esc((i.expiresAt || '').replace('T', ' ').slice(0, 16)) + '</td>' +
+          '<td><div class="row-actions">' +
+            '<button class="secondary" data-action="derpmap" data-id="' + esc(i.id) + '" data-name="' + esc(i.name) + '">查看 derpMap</button>' +
+            '<button class="danger" data-action="delete" data-id="' + esc(i.id) + '" data-name="' + esc(i.name) + '">删除</button>' +
+          '</div></td>';
         tb.appendChild(tr);
       }
     });
@@ -422,6 +453,183 @@
   const refresh = () => {
     loadCodes().catch(() => {}); loadStats().catch(() => {}); loadInstances().catch(() => {}); loadAudit().catch(() => {});
   };
+
+  // ===== 实例行操作:derpMap 模态框 + 删除二次确认 =====
+
+  // 模态框 shell 一次性创建。
+  let modalMask = null;
+  const ensureModalShell = () => {
+    if (modalMask) return modalMask;
+    modalMask = document.createElement('div');
+    modalMask.className = 'modal-mask hidden';
+    modalMask.addEventListener('click', e => { if (e.target === modalMask) closeModal(); });
+    document.body.appendChild(modalMask);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+    return modalMask;
+  };
+  const openModal = (title, bodyEl, actionEls) => {
+    const m = ensureModalShell();
+    m.innerHTML = '';
+    const card = document.createElement('div');
+    card.className = 'modal';
+    const h = document.createElement('h3');
+    h.textContent = title;
+    card.appendChild(h);
+    const body = document.createElement('div');
+    body.className = 'body';
+    body.appendChild(bodyEl);
+    card.appendChild(body);
+    if (actionEls && actionEls.length) {
+      const acts = document.createElement('div');
+      acts.className = 'actions';
+      for (const a of actionEls) acts.appendChild(a);
+      card.appendChild(acts);
+    }
+    m.appendChild(card);
+    m.classList.remove('hidden');
+  };
+  const closeModal = () => { if (modalMask) modalMask.classList.add('hidden'); };
+
+  // 复制降级方案。
+  const copyToClipboard = text => {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise((resolve, reject) => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        ok ? resolve() : reject(new Error('execCommand 失败'));
+      } catch (e) {
+        document.body.removeChild(ta);
+        reject(e);
+      }
+    });
+  };
+
+  // derpMap 模态框:fetch → <pre> + 复制/下载/关闭。
+  const openDerpMapModal = (id, name) => {
+    const body = document.createElement('div');
+    body.textContent = '加载中…';
+    const btnClose = mkBtn('关闭', 'secondary', closeModal);
+    const btnCopy = mkBtn('复制', 'secondary', null, true);
+    const btnDl = mkBtn('下载 .json', 'secondary', null, true);
+    btnCopy.disabled = true; btnDl.disabled = true;
+    openModal('derpMap · ' + name, body, [btnClose, btnDl, btnCopy]);
+
+    fetch('/v1/admin/instances/' + encodeURIComponent(id) + '/derpmap')
+      .then(async r => {
+        const b = await r.json().catch(() => ({}));
+        if (r.status === 401) { showLogin(); throw new Error('会话已过期'); }
+        if (!r.ok || b.ok === false) throw new Error(b.error || ('HTTP ' + r.status));
+        return b.data.derpMap;
+      })
+      .then(raw => {
+        const text = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
+        body.textContent = '';
+        const pre = document.createElement('pre');
+        pre.textContent = text;
+        body.appendChild(pre);
+        btnCopy.disabled = false;
+        btnCopy.onclick = () => copyToClipboard(text)
+          .then(() => { btnCopy.textContent = '已复制'; setTimeout(() => { btnCopy.textContent = '复制'; }, 1500); })
+          .catch(e => alert('复制失败:' + e.message));
+        btnDl.disabled = false;
+        btnDl.onclick = () => {
+          const blob = new Blob([text], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = 'derpmap-' + name + '.json';
+          document.body.appendChild(a); a.click();
+          setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+        };
+      })
+      .catch(e => {
+        body.textContent = '';
+        const err = document.createElement('div');
+        err.className = 'msg err';
+        err.textContent = '加载失败:' + e.message;
+        body.appendChild(err);
+      });
+  };
+
+  // 二次确认模态框:输入框 == 实例名 时确认按钮 enabled。
+  const confirmDeleteModal = (id, name) => {
+    const body = document.createElement('div');
+    const intro = document.createElement('p');
+    intro.innerHTML = '将永久删除实例 <code class="confirm-target">' + esc(name) + '</code>(停止容器并释放资源)。请输入实例名以确认:';
+    body.appendChild(intro);
+    const input = document.createElement('input');
+    input.id = 'confirm-input';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.placeholder = name;
+    body.appendChild(input);
+    const msg = document.createElement('p');
+    msg.className = 'msg err';
+    msg.style.minHeight = '1.2em';
+    body.appendChild(msg);
+
+    const btnCancel = mkBtn('取消', 'secondary', closeModal);
+    const btnOk = mkBtn('确认删除', 'danger', null);
+    btnOk.disabled = true;
+    input.oninput = () => {
+      const ok = input.value.trim() === name;
+      btnOk.disabled = !ok;
+      msg.textContent = ok ? '' : '实例名不匹配';
+    };
+    btnOk.onclick = () => { if (!btnOk.disabled) doDelete(id, btnOk); };
+
+    openModal('删除实例', body, [btnCancel, btnOk]);
+    setTimeout(() => input.focus(), 0);
+  };
+
+  const doDelete = (id, btn) => {
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = '删除中…';
+    fetch('/v1/admin/instances/' + encodeURIComponent(id), { method: 'DELETE' })
+      .then(async r => {
+        const b = await r.json().catch(() => ({}));
+        if (r.status === 401) { showLogin(); throw new Error('会话已过期'); }
+        if (!r.ok || b.ok === false) throw new Error(b.error || ('HTTP ' + r.status));
+        return b.data;
+      })
+      .then(() => { closeModal(); refresh(); })
+      .catch(e => {
+        btn.textContent = orig;
+        btn.disabled = false;
+        const m = document.querySelector('.modal .msg.err');
+        if (m) m.textContent = '删除失败:' + e.message;
+      });
+  };
+
+  // 工厂:避免重复 createElement('button') 代码。
+  const mkBtn = (text, cls, onClick, disabled) => {
+    const b = document.createElement('button');
+    b.textContent = text;
+    if (cls) b.className = cls;
+    if (disabled) b.disabled = true;
+    if (onClick) b.onclick = onClick;
+    return b;
+  };
+
+  // 事件委托:实例行操作列的按钮。
+  $('inst-body').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const id = btn.dataset.id;
+    const name = btn.dataset.name;
+    if (action === 'derpmap') openDerpMapModal(id, name);
+    else if (action === 'delete') confirmDeleteModal(id, name);
+  });
 
   const exportCodes = format => {
     const status = $('filter').value;

@@ -85,11 +85,31 @@ func TestRedeemFlow_CodeThenRedeem(t *testing.T) {
 	if err != nil || rc.UsedByInstanceID == nil || *rc.UsedByInstanceID != instID {
 		t.Fatalf("码未绑定实例: %+v err=%v", rc, err)
 	}
-	// 再兑同码应失败。
+	// 行为变更(v2):已用码再兑改为"重取"语义,返回 200 + redeemed=true。
+	// 容器被删 / 过期场景的 410 由后续 TestRedeem_UsedCodeInstanceDeleted/Expired 覆盖。
 	rec2 := httptest.NewRecorder()
 	s.rateLimit(s.handleRedeem)(rec2, httptest.NewRequest(http.MethodPost, "/v1/redeem/redeem", bytes.NewReader(body)))
-	if rec2.Code != http.StatusBadRequest {
-		t.Fatalf("已用码应拒绝, got %d", rec2.Code)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("已用码应重取 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	var env2 struct {
+		Data struct {
+			Redeemed bool            `json:"redeemed"`
+			Instance store.Instance  `json:"instance"`
+			DerpMap  json.RawMessage `json:"derpMap"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &env2); err != nil {
+		t.Fatalf("重取响应解析失败: %v %s", err, rec2.Body.String())
+	}
+	if !env2.Data.Redeemed {
+		t.Error("重取响应 redeemed 应为 true")
+	}
+	if env2.Data.Instance.ID != instID {
+		t.Errorf("重取应返回同一实例: 期望 %s, 实际 %s", instID, env2.Data.Instance.ID)
+	}
+	if len(env2.Data.DerpMap) == 0 {
+		t.Error("重取响应 derpMap 缺失")
 	}
 	// 审计日志应有一条 redeem。
 	logs, err := s.store.ListAudit(ctx, 10)
@@ -240,5 +260,109 @@ func TestChangePassword(t *testing.T) {
 	}
 	if s.store.VerifyAdminPassword(ctx, "seed") {
 		t.Fatal("旧密码应失效")
+	}
+}
+
+// redeemOnce 注入测试码 + 兑换一次,返回实例 ID。
+func redeemOnce(t *testing.T, s *Server, code string) string {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := s.store.CreateRedeemCodes(ctx, []store.RedeemCode{
+		{Code: code, DurationValue: 30, DurationUnit: "day", CreatedBy: "admin", CreatedAt: time.Now()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"code": code})
+	rec := httptest.NewRecorder()
+	s.rateLimit(s.handleRedeem)(rec, httptest.NewRequest(http.MethodPost, "/v1/redeem/redeem", bytes.NewReader(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("首次兑换应 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data struct {
+			Instance store.Instance `json:"instance"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("响应解析失败: %v", err)
+	}
+	return env.Data.Instance.ID
+}
+
+// TestRedeem_UsedCodeReturnsExistingInstance 已用码再兑:200 + redeemed=true + 同一 instID + derpMap。
+func TestRedeem_UsedCodeReturnsExistingInstance(t *testing.T) {
+	s := newAdminServer(t)
+	instID := redeemOnce(t, s, "DERP-LOOKUP-0001")
+
+	body, _ := json.Marshal(map[string]string{"code": "DERP-LOOKUP-0001"})
+	rec := httptest.NewRecorder()
+	s.rateLimit(s.handleRedeem)(rec, httptest.NewRequest(http.MethodPost, "/v1/redeem/redeem", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("重取应 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data struct {
+			Redeemed         bool            `json:"redeemed"`
+			Instance         store.Instance  `json:"instance"`
+			DerpMap          json.RawMessage `json:"derpMap"`
+			SecondsRemaining int64           `json:"secondsRemaining"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("响应解析失败: %v", err)
+	}
+	if !env.Data.Redeemed {
+		t.Error("redeemed 应为 true")
+	}
+	if env.Data.Instance.ID != instID {
+		t.Errorf("实例 ID 不匹配: 期望 %s, 实际 %s", instID, env.Data.Instance.ID)
+	}
+	if len(env.Data.DerpMap) == 0 {
+		t.Error("derpMap 缺失")
+	}
+	if env.Data.SecondsRemaining <= 0 {
+		t.Errorf("secondsRemaining 应 > 0, 实际 %d", env.Data.SecondsRemaining)
+	}
+}
+
+// TestRedeem_UsedCodeInstanceDeletedReturnsExpired 容器被管理员删后,重取 → 410。
+func TestRedeem_UsedCodeInstanceDeletedReturnsExpired(t *testing.T) {
+	s := newAdminServer(t)
+	ctx := context.Background()
+	instID := redeemOnce(t, s, "DERP-LOOKUP-0002")
+
+	if err := s.store.DeleteInstance(ctx, instID); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	body, _ := json.Marshal(map[string]string{"code": "DERP-LOOKUP-0002"})
+	rec := httptest.NewRecorder()
+	s.rateLimit(s.handleRedeem)(rec, httptest.NewRequest(http.MethodPost, "/v1/redeem/redeem", bytes.NewReader(body)))
+	if rec.Code != http.StatusGone {
+		t.Fatalf("应 410, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		OK     bool   `json:"ok"`
+		Error  string `json:"error"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &env)
+	if env.Error == "" {
+		t.Error("error 字段缺失")
+	}
+}
+
+// TestRedeem_UsedCodeInstanceExpired 容器过期后,重取 → 410。
+func TestRedeem_UsedCodeInstanceExpired(t *testing.T) {
+	s := newAdminServer(t)
+	ctx := context.Background()
+	instID := redeemOnce(t, s, "DERP-LOOKUP-0003")
+
+	if err := s.store.UpdateInstanceExpiresAt(ctx, instID, time.Now().Add(-1*time.Hour)); err != nil {
+		t.Fatalf("UpdateInstanceExpiresAt: %v", err)
+	}
+	body, _ := json.Marshal(map[string]string{"code": "DERP-LOOKUP-0003"})
+	rec := httptest.NewRecorder()
+	s.rateLimit(s.handleRedeem)(rec, httptest.NewRequest(http.MethodPost, "/v1/redeem/redeem", bytes.NewReader(body)))
+	if rec.Code != http.StatusGone {
+		t.Fatalf("应 410, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

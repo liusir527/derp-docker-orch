@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -150,32 +151,37 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleDeleteInstance DELETE /v1/instances/{id}。幂等:不存在也返回成功。
-func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	id := r.PathValue("id")
-
+// deleteInstance 共享删除流程:GetInstance → RemoveNode → DeleteInstance。
+// 幂等:不存在返回 existed=false,无错误。容器失败保留行,供重试。
+func (s *Server) deleteInstance(ctx context.Context, id string) (*store.Instance, bool, error) {
 	inst, err := s.store.GetInstance(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
-		writeJSON(w, http.StatusOK, map[string]any{"deleted": false})
-		return
+		return nil, false, nil
 	}
+	if err != nil {
+		return nil, false, err
+	}
+	if err := s.orch.RemoveNode(ctx, inst); err != nil {
+		return nil, false, fmt.Errorf("移除容器失败: %w", err)
+	}
+	if err := s.store.DeleteInstance(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, false, err
+	}
+	return inst, true, nil
+}
+
+// handleDeleteInstance DELETE /v1/instances/{id}。幂等:不存在也返回成功。
+func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	_, existed, err := s.deleteInstance(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	// 先停容器,再删行;容器失败保留行供重试。
-	if err := s.orch.RemoveNode(ctx, inst); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("移除容器失败: %v", err))
-		return
+	if existed {
+		log.Printf("[api] 删除实例 %s", id)
 	}
-	if err := s.store.DeleteInstance(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	log.Printf("[api] 删除实例 %s", id)
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": existed})
 }
 
 // regionCodeFromName 从 derp-YYYYMMDD-xxxx 提取短日期段(YYYYMMDD[2:],如 260812)。

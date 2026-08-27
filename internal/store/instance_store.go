@@ -33,6 +33,13 @@ func (s *Store) UpdateInstanceHostIP(ctx context.Context, id, hostIP string) err
 	return err
 }
 
+// UpdateInstanceExpiresAt 更新实例过期时间(测试助手:模拟已过期场景)。
+func (s *Store) UpdateInstanceExpiresAt(ctx context.Context, id string, t time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE instances SET expires_at = ? WHERE id = ?`,
+		t.UTC().Format(timeFmt), id)
+	return err
+}
+
 // GetInstance 按 ID 查询。
 func (s *Store) GetInstance(ctx context.Context, id string) (*Instance, error) {
 	row := s.db.QueryRowContext(ctx,

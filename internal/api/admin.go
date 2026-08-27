@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"derp-orch/internal/auth"
+	"derp-orch/internal/derp"
 	"derp-orch/internal/docker"
 	"derp-orch/internal/redeem"
 	"derp-orch/internal/store"
@@ -331,6 +333,61 @@ func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"logs": out})
+}
+
+// handleAdminDeleteInstance DELETE /v1/admin/instances/{id}。管理员手动删除,带审计。
+// 二次确认 UX 由前端模态框负责;后端仅校验路径 id。幂等:不存在 → {deleted:false}。
+func (s *Server) handleAdminDeleteInstance(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	inst, existed, err := s.deleteInstance(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !existed {
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": false})
+		return
+	}
+
+	// 审计:记录操作者与实例元数据,供事后追溯。
+	username, _ := s.authmgr.Authenticate(r)
+	detail := fmt.Sprintf("admin 手动删除实例 subdomain=%s regionID=%d stunPort=%d",
+		inst.Subdomain, inst.RegionID, inst.STUNPort)
+	if uerr := s.store.AddAudit(ctx, store.AuditLog{
+		Kind:       "admin_delete_instance",
+		InstanceID: inst.ID,
+		Username:   username,
+		Detail:     detail,
+	}); uerr != nil {
+		log.Printf("[admin] 写审计失败 instance=%s: %v", inst.ID, uerr)
+	}
+	log.Printf("[admin] 删除实例 %s 操作者=%s", inst.ID, username)
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
+}
+
+// handleAdminDerpMap GET /v1/admin/instances/{id}/derpmap。供管理员重取 derpMap。
+func (s *Server) handleAdminDerpMap(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	inst, err := s.store.GetInstance(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "实例不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	derpMap, err := derp.MapForInstance(inst, s.cfg.DERPPort)
+	if err != nil {
+		log.Printf("[admin] 生成实例 %s derpMap 失败: %v", inst.ID, err)
+		writeError(w, http.StatusInternalServerError, "生成 derpMap 失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"derpMap": json.RawMessage(derpMap)})
 }
 
 func atoiDefault(s string, def int) int {

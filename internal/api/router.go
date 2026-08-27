@@ -80,6 +80,8 @@ func New(cfg *config.Config, st *store.Store, orch docker.Orchestrator, sweep *l
 	mux.Handle("GET /v1/admin/codes/export", s.adminAuth(http.HandlerFunc(s.handleExportCodes)))
 	mux.Handle("GET /v1/admin/stats", s.adminAuth(http.HandlerFunc(s.handleAdminStats)))
 	mux.Handle("GET /v1/admin/instances", s.adminAuth(http.HandlerFunc(s.handleAdminInstances)))
+	mux.Handle("DELETE /v1/admin/instances/{id}", s.adminAuth(http.HandlerFunc(s.handleAdminDeleteInstance)))
+	mux.Handle("GET /v1/admin/instances/{id}/derpmap", s.adminAuth(http.HandlerFunc(s.handleAdminDerpMap)))
 	mux.Handle("GET /v1/admin/audit", s.adminAuth(http.HandlerFunc(s.handleAdminAudit)))
 
 	// 旧 Bearer 管理端点,保留向后兼容(内部/脚本用)。
