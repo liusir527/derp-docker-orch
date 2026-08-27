@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -162,6 +163,38 @@ func (s *Store) DisableRedeemCode(ctx context.Context, code string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE redeem_codes SET disabled = 1 WHERE code = ? AND used_at IS NULL`, code)
 	return err
+}
+
+// ListRedeemCodesByInstanceIDs 批量按 instanceID 查对应兑换码(used_by_instance_id)。
+// 返回 map[instanceID]code,未绑定的 instanceID 不在结果里。兑换码为空数组时返回空 map。
+func (s *Store) ListRedeemCodesByInstanceIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	if len(ids) == 0 {
+		return map[string]string{}, nil
+	}
+	// 动态拼 IN (?, ?, ...)。
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := `SELECT used_by_instance_id, code FROM redeem_codes
+		WHERE used_by_instance_id IN (` + strings.Join(placeholders, ",") + `)
+		  AND used_at IS NOT NULL`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("批量查兑换码: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]string, len(ids))
+	for rows.Next() {
+		var instID, code string
+		if err := rows.Scan(&instID, &code); err != nil {
+			return nil, err
+		}
+		out[instID] = code
+	}
+	return out, rows.Err()
 }
 
 // CountRedeemCodes 统计:总数、未用、已用。

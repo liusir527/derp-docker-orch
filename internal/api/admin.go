@@ -275,14 +275,26 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleAdminInstances GET /v1/admin/instances。实例 + 各容器资源。
+// handleAdminInstances GET /v1/admin/instances。实例 + 各容器资源 + 兑换码来源。
 func (s *Server) handleAdminInstances(w http.ResponseWriter, r *http.Request) {
-	insts, err := s.store.ListInstances(r.Context())
+	ctx := r.Context()
+	insts, err := s.store.ListInstances(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	stats, err := s.orch.Stats(r.Context())
+	// 批量查兑换码(单 SQL,避免 N+1)。
+	ids := make([]string, 0, len(insts))
+	for _, i := range insts {
+		ids = append(ids, i.ID)
+	}
+	codeByInst, err := s.store.ListRedeemCodesByInstanceIDs(ctx, ids)
+	if err != nil {
+		// 兑换码查询失败不应阻塞实例列表(只丢来源信息)。
+		log.Printf("[admin] 批量查兑换码失败: %v", err)
+		codeByInst = map[string]string{}
+	}
+	stats, err := s.orch.Stats(ctx)
 	if err != nil {
 		stats = map[string]*docker.ContainerStat{}
 	}
@@ -291,11 +303,12 @@ func (s *Server) handleAdminInstances(w http.ResponseWriter, r *http.Request) {
 		ContainerState string  `json:"containerState"`
 		CPUPct         float64 `json:"cpuPct"`
 		MemBytes       uint64  `json:"memBytes"`
+		Code           string  `json:"code,omitempty"`
 	}
 	out := make([]row, 0, len(insts))
 	for _, i := range insts {
 		st := stats[i.ContainerName]
-		rw := row{Instance: i, ContainerState: "missing"}
+		rw := row{Instance: i, ContainerState: "missing", Code: codeByInst[i.ID]}
 		if st != nil {
 			rw.ContainerState = "running"
 			rw.CPUPct = st.CPUPct

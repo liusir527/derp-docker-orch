@@ -215,7 +215,7 @@
     <h2>运行实例与资源</h2>
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>实例</th><th>子域名</th><th>状态</th><th>CPU%</th><th>内存</th><th>过期时间</th><th>操作</th></tr></thead>
+      <thead><tr><th>实例</th><th>子域名</th><th>兑换码</th><th>状态</th><th>CPU%</th><th>内存</th><th>过期时间</th><th>操作</th></tr></thead>
       <tbody id="inst-body"></tbody>
     </table>
     </div>
@@ -420,6 +420,7 @@
         tr.innerHTML =
           '<td class="mono">' + esc(i.name) + '</td>' +
           '<td class="mono">' + esc(i.subdomain) + '</td>' +
+          '<td class="mono">' + esc(i.code || '–') + '</td>' +
           '<td><span class="pill ' + (i.containerState === 'running' ? 'up' : 'down') + '">' + esc(i.containerState) + '</span></td>' +
           '<td>' + (i.cpuPct || 0).toFixed(1) + '</td>' +
           '<td class="mono">' + ((i.memBytes || 0) / 1024 / 1024).toFixed(1) + ' MB</td>' +
@@ -517,19 +518,14 @@
   const openDerpMapModal = (id, name) => {
     const body = document.createElement('div');
     body.textContent = '加载中…';
-    const btnClose = mkBtn('关闭', 'secondary', closeModal);
+    // 直接 inline onclick,不依赖 closeModal 闭包传递,避免任何引用丢失。
+    const btnClose = mkBtn('关闭', 'secondary', () => { if (modalMask) modalMask.classList.add('hidden'); });
     const btnCopy = mkBtn('复制', 'secondary', null, true);
     const btnDl = mkBtn('下载 .json', 'secondary', null, true);
     btnCopy.disabled = true; btnDl.disabled = true;
     openModal('derpMap · ' + name, body, [btnClose, btnDl, btnCopy]);
 
-    fetch('/v1/admin/instances/' + encodeURIComponent(id) + '/derpmap')
-      .then(async r => {
-        const b = await r.json().catch(() => ({}));
-        if (r.status === 401) { showLogin(); throw new Error('会话已过期'); }
-        if (!r.ok || b.ok === false) throw new Error(b.error || ('HTTP ' + r.status));
-        return b.data.derpMap;
-      })
+    api('/v1/admin/instances/' + encodeURIComponent(id) + '/derpmap')
       .then(raw => {
         const text = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
         body.textContent = '';
@@ -576,7 +572,7 @@
     msg.style.minHeight = '1.2em';
     body.appendChild(msg);
 
-    const btnCancel = mkBtn('取消', 'secondary', closeModal);
+    const btnCancel = mkBtn('取消', 'secondary', () => { if (modalMask) modalMask.classList.add('hidden'); });
     const btnOk = mkBtn('确认删除', 'danger', null);
     btnOk.disabled = true;
     input.oninput = () => {
@@ -594,19 +590,14 @@
     btn.disabled = true;
     const orig = btn.textContent;
     btn.textContent = '删除中…';
-    fetch('/v1/admin/instances/' + encodeURIComponent(id), { method: 'DELETE' })
-      .then(async r => {
-        const b = await r.json().catch(() => ({}));
-        if (r.status === 401) { showLogin(); throw new Error('会话已过期'); }
-        if (!r.ok || b.ok === false) throw new Error(b.error || ('HTTP ' + r.status));
-        return b.data;
-      })
+    api('/v1/admin/instances/' + encodeURIComponent(id), { method: 'DELETE' })
       .then(() => { closeModal(); refresh(); })
       .catch(e => {
         btn.textContent = orig;
         btn.disabled = false;
         const m = document.querySelector('.modal .msg.err');
         if (m) m.textContent = '删除失败:' + e.message;
+        else alert('删除失败:' + e.message);
       });
   };
 
