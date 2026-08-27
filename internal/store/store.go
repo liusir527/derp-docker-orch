@@ -53,6 +53,11 @@ var migrations = []string{
 		created_at  TEXT NOT NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at)`,
+	// v4: 管理员密码哈希(改密码功能)。
+	`CREATE TABLE IF NOT EXISTS admin_password (
+		id            INTEGER PRIMARY KEY CHECK(id = 1),
+		password_hash TEXT NOT NULL
+	)`,
 }
 
 // Store SQLite 存储。并发安全由 database/sql 连接池保证。

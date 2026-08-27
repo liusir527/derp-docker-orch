@@ -19,6 +19,7 @@ import (
 const maxBatchCodes = 1000
 
 // adminLoginRequest 登录请求。
+// 首次登录无需验证码(captchaId/captchaText 可空);密码失败后该 IP 再登录需验证码。
 type adminLoginRequest struct {
 	Username    string `json:"username"`
 	Password    string `json:"password"`
@@ -26,7 +27,9 @@ type adminLoginRequest struct {
 	CaptchaText string `json:"captchaText"`
 }
 
-// handleAdminLogin POST /v1/admin/login。验证码一次有效 + 密码 + 失败锁定。
+// handleAdminLogin POST /v1/admin/login。
+// 验证码规则:首次(该 IP 无失败记录)免验证码;失败后需要。
+// 密码错误 → 标记该 IP 需验证码;成功 → 清除标记。
 func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	var req adminLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -43,16 +46,26 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, fmt.Sprintf("账户已锁定,请 %.0f 分钟后再试", remain.Minutes()))
 		return
 	}
-	if !s.captcha.Validate(req.CaptchaID, req.CaptchaText) {
-		writeError(w, http.StatusBadRequest, "验证码错误或已失效")
-		return
-	}
 
+	// 密码先校验(免验证码时也需先验密码)。
 	token, err := s.authmgr.Login(req.Username, req.Password)
 	if err != nil {
+		// 密码错误:标记该 IP 后续需验证码。
+		s.authmgr.MarkIPFailed(ip)
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
+
+	// 密码正确,若该 IP 曾失败过则必须验证码。
+	if s.authmgr.NeedsCaptcha(ip) {
+		if !s.captcha.Validate(req.CaptchaID, req.CaptchaText) {
+			writeError(w, http.StatusBadRequest, "验证码错误或已失效")
+			return
+		}
+	}
+
+	// 登录成功:清除失败标记 + 发会话 cookie。
+	s.authmgr.ResetIPFailure(ip)
 	http.SetCookie(w, &http.Cookie{
 		Name:     authSessionCookie,
 		Value:    token,
@@ -62,6 +75,44 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   int(s.cfg.SessionTTL.Seconds()),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleAdminLoginState GET /v1/admin/login/state。前端查询该 IP 是否需验证码。
+func (s *Server) handleAdminLoginState(w http.ResponseWriter, r *http.Request) {
+	ip := auth.ClientIP(r)
+	writeJSON(w, http.StatusOK, map[string]any{"needCaptcha": s.authmgr.NeedsCaptcha(ip)})
+}
+
+// adminChangePasswordRequest 改密码请求。
+type adminChangePasswordRequest struct {
+	OldPassword string `json:"oldPassword"`
+	NewPassword string `json:"newPassword"`
+}
+
+// handleAdminChangePassword POST /v1/admin/password(需登录)。改密码后登出。
+func (s *Server) handleAdminChangePassword(w http.ResponseWriter, r *http.Request) {
+	var req adminChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "请求体必须是 JSON")
+		return
+	}
+	if req.NewPassword == "" || len(req.NewPassword) < 6 {
+		writeError(w, http.StatusBadRequest, "新密码至少 6 位")
+		return
+	}
+	if err := s.store.UpdateAdminPassword(r.Context(), req.OldPassword, req.NewPassword); err != nil {
+		writeError(w, http.StatusBadRequest, "旧密码错误或记录不存在")
+		return
+	}
+	// 使当前会话失效。
+	if c, cerr := r.Cookie(authSessionCookie); cerr == nil {
+		s.authmgr.Logout(c.Value)
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: authSessionCookie, Value: "", Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteStrictMode, MaxAge: -1,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "relogin": true})
 }
 
 // handleAdminLogout POST /v1/admin/logout。

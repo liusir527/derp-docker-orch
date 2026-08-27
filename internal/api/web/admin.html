@@ -15,49 +15,79 @@
   body {
     background: var(--bg); color: var(--text);
     font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
-    padding: 2rem 1rem; max-width: 980px; margin: 0 auto;
+    padding: 2rem 1rem; max-width: 1024px; margin: 0 auto;
   }
-  header { display: flex; justify-content: space-between; align-items: center; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
   header h1 { font-size: 1.5rem; letter-spacing: -0.02em; }
   header p { color: var(--muted); margin-top: .2rem; }
+
   .card {
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 12px; padding: 1.4rem; margin-top: 1.4rem;
   }
-  .card h2 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: .9rem; }
+  .card h2 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 1rem; }
+
   input, select, button { font: inherit; }
   input, select {
     background: var(--surface-2); color: var(--text);
     border: 1px solid var(--border); border-radius: 8px; padding: .55rem .7rem;
+    width: 100%;
   }
-  input { width: 100%; }
   button {
     border: 0; border-radius: 8px; padding: .55rem 1.1rem; cursor: pointer;
     background: var(--accent); color: #08120e; font-weight: 600;
   }
   button.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
   button.danger { background: var(--danger); color: #1a0505; }
+
   .msg { font-size: .85rem; margin-top: .5rem; min-height: 1.2em; }
   .msg.err { color: var(--danger); }
-  .row { display: flex; gap: .8rem; align-items: flex-end; flex-wrap: wrap; }
-  .row > div { flex: 1; min-width: 130px; }
-  label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: .3rem; }
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .8rem; }
+
+  /* 表单布局:标签在上,输入在下,纵向堆叠不重叠 */
+  .field { display: flex; flex-direction: column; gap: .35rem; }
+  .field label { font-size: .8rem; color: var(--muted); }
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: .9rem;
+  }
+  .form-actions { margin-top: 1rem; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .8rem; }
   .stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: .8rem 1rem; }
-  .stat .n { font-size: 1.5rem; font-weight: 700; font-family: var(--mono); }
+  .stat .n { font-size: 1.4rem; font-weight: 700; font-family: var(--mono); word-break: break-all; }
   .stat .l { font-size: .75rem; color: var(--muted); }
+
   table { width: 100%; border-collapse: collapse; margin-top: .5rem; }
-  th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--border); font-size: .85rem; }
+  th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--border); font-size: .85rem; vertical-align: top; }
   th { color: var(--muted); font-weight: 600; }
-  td.mono { font-family: var(--mono); font-size: .82rem; }
-  .pill { display: inline-block; font-size: .72rem; padding: .1rem .5rem; border-radius: 99px; }
+  td.mono { font-family: var(--mono); font-size: .82rem; word-break: break-all; }
+
+  .pill { display: inline-block; font-size: .72rem; padding: .1rem .5rem; border-radius: 99px; white-space: nowrap; }
   .pill.unused { background: #123528; color: var(--accent); }
   .pill.used { background: #3a3434; color: var(--muted); }
   .pill.up { background: #123528; color: var(--accent); }
   .pill.down { background: #3a1c1c; color: var(--danger); }
+
   .warnbar { background: #33280f; border: 1px solid #6b5520; color: var(--warn); border-radius: 8px; padding: .6rem .9rem; margin-top: .8rem; font-size: .85rem; }
+
+  /* 登录卡片:窄居中,纵向 */
+  .login-wrap { max-width: 420px; margin: 2.5rem auto 0; }
+  .captcha-row { display: flex; gap: .9rem; align-items: flex-end; }
+  .captcha-row .field { flex: 1; }
+  #captcha-img {
+    border: 1px solid var(--border); border-radius: 8px; height: 44px; cursor: pointer;
+    display: block; max-width: 140px;
+  }
+
   .hidden { display: none; }
-  #captcha-img { border: 1px solid var(--border); border-radius: 8px; height: 46px; cursor: pointer; }
+
+  @media (max-width: 640px) {
+    body { padding: 1rem .75rem; }
+    .form-grid { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: 1fr 1fr; }
+    .captcha-row { flex-direction: column; align-items: stretch; }
+  }
 </style>
 </head>
 <body>
@@ -70,17 +100,31 @@
 </header>
 
 <!-- 登录 -->
-<div class="card" id="login-card">
+<div class="card login-wrap hidden" id="login-card">
   <h2>管理员登录</h2>
-  <div class="row">
-    <div><label for="u">用户名</label><input id="u" value="admin" autocomplete="username"></div>
-    <div><label for="p">密码</label><input type="password" id="p" autocomplete="current-password"></div>
+  <div class="field">
+    <label for="u">用户名</label>
+    <input id="u" value="admin" autocomplete="username">
   </div>
-  <div class="row" style="margin-top:.8rem">
-    <div style="flex:2"><label for="c">验证码</label><input id="c" autocomplete="off"></div>
-    <div style="flex:1"><label>点击刷新</label><img id="captcha-img" alt="验证码"></div>
+  <div class="field" style="margin-top:.9rem">
+    <label for="p">密码</label>
+    <input type="password" id="p" autocomplete="current-password">
   </div>
-  <button id="btn-login">登录</button>
+  <div id="captcha-fields" class="hidden" style="margin-top:.9rem">
+    <div class="captcha-row">
+      <div class="field">
+        <label for="c">验证码</label>
+        <input id="c" autocomplete="off" placeholder="输入图中字符">
+      </div>
+      <div class="field">
+        <label>点击刷新</label>
+        <img id="captcha-img" alt="验证码">
+      </div>
+    </div>
+  </div>
+  <div class="form-actions">
+    <button id="btn-login">登录</button>
+  </div>
   <p class="msg err" id="login-msg"></p>
 </div>
 
@@ -96,59 +140,83 @@
   <!-- 建码 -->
   <div class="card">
     <h2>批量创建兑换码</h2>
-    <div class="row">
-      <div><label for="count">数量</label><input type="number" id="count" value="10" min="1" max="1000"></div>
-      <div><label for="dv">时长</label><input type="number" id="dv" value="30" min="1"></div>
-      <div><label for="du">单位</label>
+    <div class="form-grid">
+      <div class="field"><label for="count">数量</label><input type="number" id="count" value="10" min="1" max="1000"></div>
+      <div class="field"><label for="dv">时长</label><input type="number" id="dv" value="30" min="1"></div>
+      <div class="field">
+        <label for="du">单位</label>
         <select id="du">
           <option value="day">天</option>
           <option value="month">月</option>
           <option value="year">年</option>
         </select>
       </div>
-      <div><label for="prefix">前缀(可选)</label><input id="prefix" placeholder="默认 DERP,≤8 位"></div>
-      <div><label for="note">备注(可选)</label><input id="note"></div>
+      <div class="field"><label for="prefix">前缀(可选)</label><input id="prefix" placeholder="默认 DERP,≤8 位"></div>
+      <div class="field"><label for="note">备注(可选)</label><input id="note"></div>
     </div>
-    <button id="btn-create">生成兑换码</button>
+    <div class="form-actions">
+      <button id="btn-create">生成兑换码</button>
+    </div>
     <p class="msg" id="create-msg"></p>
   </div>
 
   <!-- 码列表 -->
   <div class="card">
     <h2>兑换码列表</h2>
-    <div class="row" style="margin-bottom:.5rem">
-      <div style="max-width:180px">
+    <div style="display:flex; gap:.8rem; align-items:flex-end; flex-wrap:wrap; margin-bottom:.6rem">
+      <div class="field" style="width:170px">
+        <label for="filter">状态</label>
         <select id="filter">
           <option value="all">全部</option>
           <option value="unused" selected>未使用</option>
           <option value="used">已使用</option>
         </select>
       </div>
-      <div><button class="secondary" id="btn-export-txt">导出 .txt</button></div>
-      <div><button class="secondary" id="btn-export-csv">导出 .csv</button></div>
+      <button class="secondary" id="btn-export-txt">导出 .txt</button>
+      <button class="secondary" id="btn-export-csv">导出 .csv</button>
     </div>
+    <div style="overflow-x:auto">
     <table>
       <thead><tr><th>兑换码</th><th>时长</th><th>状态</th><th>使用实例</th><th>创建时间</th></tr></thead>
       <tbody id="codes-body"></tbody>
     </table>
+    </div>
   </div>
 
   <!-- 实例 -->
   <div class="card">
     <h2>运行实例与资源</h2>
+    <div style="overflow-x:auto">
     <table>
       <thead><tr><th>实例</th><th>子域名</th><th>状态</th><th>CPU%</th><th>内存</th><th>过期时间</th></tr></thead>
       <tbody id="inst-body"></tbody>
     </table>
+    </div>
   </div>
 
   <!-- 审计 -->
   <div class="card">
     <h2>审计日志</h2>
+    <div style="overflow-x:auto">
     <table>
       <thead><tr><th>时间</th><th>类型</th><th>兑换码</th><th>实例</th><th>详情</th></tr></thead>
       <tbody id="audit-body"></tbody>
     </table>
+    </div>
+  </div>
+
+  <!-- 改密码 -->
+  <div class="card">
+    <h2>修改密码</h2>
+    <div class="form-grid" style="max-width:560px">
+      <div class="field"><label for="old-p">旧密码</label><input type="password" id="old-p" autocomplete="current-password"></div>
+      <div class="field"><label for="new-p">新密码(≥6 位)</label><input type="password" id="new-p" autocomplete="new-password"></div>
+      <div class="field"><label for="new-p2">确认新密码</label><input type="password" id="new-p2" autocomplete="new-password"></div>
+    </div>
+    <div class="form-actions">
+      <button id="btn-chpw" class="secondary">修改密码</button>
+    </div>
+    <p class="msg" id="chpw-msg"></p>
   </div>
 </div>
 
@@ -156,7 +224,6 @@
 (() => {
   const $ = id => document.getElementById(id);
   let captchaId = null;
-  setInterval(() => { if (!$('login-card').classList.contains('hidden')) loadCaptcha(); }, 300000);
 
   const api = (path, opts = {}) =>
     fetch(path, {
@@ -179,11 +246,23 @@
       .then(b => { $('captcha-img').src = URL.createObjectURL(b); })
       .catch(() => {});
 
+  // 刷新登录状态:决定是否显示验证码。
+  const refreshLoginUI = () => {
+    fetch('/v1/admin/login/state')
+      .then(r => r.json())
+      .then(b => {
+        const need = !!(b.data && b.data.needCaptcha);
+        $('captcha-fields').classList.toggle('hidden', !need);
+        if (need) loadCaptcha();
+      })
+      .catch(() => {});
+  };
+
   const showLogin = () => {
     $('login-card').classList.remove('hidden');
     $('panel').classList.add('hidden');
     $('btn-logout').classList.add('hidden');
-    loadCaptcha();
+    refreshLoginUI();
   };
 
   const showPanel = () => {
@@ -197,26 +276,42 @@
 
   $('btn-login').onclick = async () => {
     $('login-msg').textContent = '';
+    const payload = { username: $('u').value.trim(), password: $('p').value };
+    if (!$('captcha-fields').classList.contains('hidden')) {
+      payload.captchaId = captchaId;
+      payload.captchaText = $('c').value.trim();
+    }
     try {
-      await api('/v1/admin/login', {
-        method: 'POST',
-        body: JSON.stringify({
-          username: $('u').value.trim(),
-          password: $('p').value,
-          captchaId, captchaText: $('c').value.trim(),
-        }),
-      });
+      await api('/v1/admin/login', { method: 'POST', body: JSON.stringify(payload) });
       showPanel();
     } catch (e) {
       $('login-msg').textContent = e.message;
-      $('c').value = '';
-      loadCaptcha();
+      // 密码错 → 后端标记,刷新需验证码。
+      refreshLoginUI();
     }
   };
 
   $('btn-logout').onclick = async () => {
     try { await api('/v1/admin/logout', { method: 'POST' }); } catch (e) {}
     showLogin();
+  };
+
+  $('btn-chpw').onclick = async () => {
+    $('chpw-msg').textContent = '';
+    const np = $('new-p').value, np2 = $('new-p2').value;
+    if (np !== np2) { $('chpw-msg').className = 'msg err'; $('chpw-msg').textContent = '两次新密码不一致'; return; }
+    try {
+      const d = await api('/v1/admin/password', {
+        method: 'POST',
+        body: JSON.stringify({ oldPassword: $('old-p').value, newPassword: np }),
+      });
+      $('chpw-msg').textContent = d.relogin ? '密码已修改,请用新密码重新登录' : '密码已修改';
+      ['old-p','new-p','new-p2'].forEach(id => $(id).value = '');
+      if (d.relogin) showLogin();
+    } catch (e) {
+      $('chpw-msg').className = 'msg err';
+      $('chpw-msg').textContent = e.message;
+    }
   };
 
   $('btn-create').onclick = async () => {
@@ -337,7 +432,7 @@
   $('filter').onchange = loadCodes;
   $('captcha-img').onclick = loadCaptcha;
 
-  // 启动:尝试直接进面板(已有会话),失败则显示登录。
+  // 启动:已有会话直接进面板,否则显示登录。
   api('/v1/admin/stats').then(showPanel).catch(showLogin);
 })();
 </script>

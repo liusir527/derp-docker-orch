@@ -72,6 +72,8 @@ func New(cfg *config.Config, st *store.Store, orch docker.Orchestrator, sweep *l
 
 	// 管理端点(session 认证)。
 	mux.HandleFunc("POST /v1/admin/login", s.handleAdminLogin)
+	mux.HandleFunc("GET /v1/admin/login/state", s.handleAdminLoginState)
+	mux.Handle("POST /v1/admin/password", s.adminAuth(http.HandlerFunc(s.handleAdminChangePassword)))
 	mux.Handle("POST /v1/admin/logout", s.adminAuth(http.HandlerFunc(s.handleAdminLogout)))
 	mux.Handle("POST /v1/admin/codes", s.adminAuth(http.HandlerFunc(s.handleCreateCodes)))
 	mux.Handle("GET /v1/admin/codes", s.adminAuth(http.HandlerFunc(s.handleListCodes)))

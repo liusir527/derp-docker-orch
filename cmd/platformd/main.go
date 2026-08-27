@@ -67,14 +67,20 @@ func main() {
 
 	// 验证码 + admin 认证 + 资源配额。
 	captchaStore := captcha.New()
+	// 首次启动从 ADMIN_PASSWORD 种子密码(仅当 DB 无记录);后续改密码落 DB(bcrypt)。
+	if err := st.InitAdminPassword(context.Background(), cfg.AdminPassword); err != nil {
+		log.Fatalf("初始化管理员密码: %v", err)
+	}
 	authmgr := auth.New(auth.Options{
 		Username:       cfg.AdminUsername,
-		Password:       cfg.AdminPassword,
 		SessionTTL:     cfg.SessionTTL,
 		LoginRateLimit: cfg.LoginIPRateLimit,
 		LoginWindow:    time.Duration(cfg.LoginIPWindowSeconds) * time.Second,
 		MaxFails:       cfg.LoginMaxFails,
 		LockDuration:   time.Duration(cfg.LoginLockMinutes) * time.Minute,
+		Verify: func(p string) bool {
+			return st.VerifyAdminPassword(context.Background(), p)
+		},
 	})
 	checker := limits.New(limits.Options{
 		MaxContainers:      cfg.MaxContainers,

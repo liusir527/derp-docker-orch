@@ -10,12 +10,12 @@ import (
 func newTestMgr() *Manager {
 	return New(Options{
 		Username:       "admin",
-		Password:       "secret",
 		SessionTTL:     time.Hour,
 		LoginRateLimit: 3,
 		LoginWindow:    time.Minute,
 		MaxFails:       2,
 		LockDuration:   time.Minute,
+		Verify:         func(p string) bool { return p == "secret" },
 	})
 }
 
@@ -68,6 +68,24 @@ func TestIPRateLimit(t *testing.T) {
 	// 其他 IP 不受影响。
 	if !m.CheckIPRate("5.6.7.8") {
 		t.Fatal("其他 IP 应允许")
+	}
+}
+
+func TestCaptchaGating_FirstLoginNoCaptcha(t *testing.T) {
+	m := newTestMgr()
+	ip := "9.9.9.9"
+	if m.NeedsCaptcha(ip) {
+		t.Fatal("首次登录不应需验证码")
+	}
+	// 密码错 → 标记该 IP。
+	m.MarkIPFailed(ip)
+	if !m.NeedsCaptcha(ip) {
+		t.Fatal("失败后应需验证码")
+	}
+	// 登录成功 → 清除。
+	m.ResetIPFailure(ip)
+	if m.NeedsCaptcha(ip) {
+		t.Fatal("成功后应清除验证码要求")
 	}
 }
 

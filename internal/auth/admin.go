@@ -4,7 +4,6 @@ package auth
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
 	"net"
 	"net/http"
@@ -18,12 +17,13 @@ const SessionCookie = "derp_admin_session"
 // Options 认证配置。
 type Options struct {
 	Username       string
-	Password       string
 	SessionTTL     time.Duration
 	LoginRateLimit int           // IP 每窗口最大登录尝试
 	LoginWindow    time.Duration // 窗口
 	MaxFails       int           // 同用户连续失败锁定阈值
 	LockDuration   time.Duration // 锁定时长
+	// Verify 密码校验函数(支持 DB bcrypt)。由组装方注入。
+	Verify func(password string) bool
 }
 
 // Manager admin 认证。
@@ -33,6 +33,8 @@ type Manager struct {
 	sess   map[string]session // token → session
 	ipHits map[string][]time.Time
 	fails  map[string]failState // 用户名 → 失败计数
+	// ipFailed 记录哪些 IP 曾登录失败 → 后续登录需验证码。
+	ipFailed map[string]bool
 }
 
 type session struct {
@@ -48,19 +50,21 @@ type failState struct {
 // New 创建认证管理器。
 func New(opts Options) *Manager {
 	return &Manager{
-		opts:   opts,
-		sess:   map[string]session{},
-		ipHits: map[string][]time.Time{},
-		fails:  map[string]failState{},
+		opts:     opts,
+		sess:     map[string]session{},
+		ipHits:   map[string][]time.Time{},
+		fails:    map[string]failState{},
+		ipFailed: map[string]bool{},
 	}
 }
 
 // Login 校验用户名+密码,成功返回 session token。
+// 密码校验委托 opts.Verify(DB bcrypt);旧 opts.Password 字段已移除。
 func (m *Manager) Login(username, password string) (string, error) {
 	if username != m.opts.Username {
 		return "", ErrInvalidCredentials
 	}
-	if subtle.ConstantTimeCompare([]byte(password), []byte(m.opts.Password)) != 1 {
+	if m.opts.Verify == nil || !m.opts.Verify(password) {
 		m.recordFail(username)
 		return "", ErrInvalidCredentials
 	}
@@ -73,6 +77,27 @@ func (m *Manager) Login(username, password string) (string, error) {
 	m.sess[token] = session{username: username, expiry: time.Now().Add(m.opts.SessionTTL)}
 	m.mu.Unlock()
 	return token, nil
+}
+
+// NeedsCaptcha 该 IP 是否需要验证码(曾登录失败过)。
+func (m *Manager) NeedsCaptcha(ip string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.ipFailed[ip]
+}
+
+// MarkIPFailed 记录该 IP 登录失败,后续登录需验证码。
+func (m *Manager) MarkIPFailed(ip string) {
+	m.mu.Lock()
+	m.ipFailed[ip] = true
+	m.mu.Unlock()
+}
+
+// ResetIPFailure 登录成功后清除该 IP 失败标记。
+func (m *Manager) ResetIPFailure(ip string) {
+	m.mu.Lock()
+	delete(m.ipFailed, ip)
+	m.mu.Unlock()
 }
 
 // Logout 销毁 session。
