@@ -15,7 +15,7 @@
   body {
     background: var(--bg); color: var(--text);
     font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
-    padding: 2.5rem 1rem; max-width: 720px; margin: 0 auto;
+    padding: 2.5rem 1rem; max-width: 960px; margin: 0 auto;
   }
   header h1 { font-size: 1.7rem; letter-spacing: -0.02em; }
   header p { color: var(--muted); margin-top: .2rem; }
@@ -56,43 +56,41 @@
   details ol { margin: .8rem 0 .2rem 1.2rem; }
   details code { background: var(--surface-2); padding: .1rem .4rem; border-radius: 4px; font-family: var(--mono); font-size: .85em; }
 
-  /* ---- 地区选择卡片(延迟推荐) ---- */
-  .region-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: .7rem; margin-top: .6rem;
+  [hidden] { display: none !important; }
+  .region-picker { border: 0; padding: 0; margin: 0 0 1.5rem; min-width: 0; }
+  .region-picker legend { font-size: 1.25rem; font-weight: 700; margin-bottom: .3rem; }
+  .region-help, .region-note { color: var(--muted); font-size: .85rem; }
+  .region-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: .8rem 0; }
+  .region-toolbar button { margin: 0; flex-shrink: 0; }
+  .recommendation { background: #123528; border: 1px solid var(--accent); border-radius: 12px; padding: 1.1rem 1.2rem; margin: .9rem 0; }
+  .recommendation.pending { background: var(--surface-2); border-color: var(--border); }
+  .recommendation .rec-label { color: var(--accent); font-size: .85rem; font-weight: 700; }
+  .recommendation h3 { font-size: 1.45rem; margin: .25rem 0; overflow-wrap: anywhere; }
+  .recommendation p { font-size: .9rem; }
+  .region-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0; }
+  .region-card { position: relative; display: block; background: var(--surface-2); border: 2px solid var(--border); border-radius: 12px; padding: 1.2rem; min-height: 180px; cursor: pointer; overflow-wrap: anywhere; }
+  .region-card:hover { border-color: #61738d; }
+  .region-card.recommended { border-color: #37876c; }
+  .region-card.selected { border-color: var(--accent); background: #142e28; }
+  .region-card:focus-within { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .region-card input { position: absolute; top: 1.2rem; right: 1.2rem; width: 26px; height: 26px; accent-color: var(--accent); cursor: pointer; }
+  .rc-name { display: block; padding-right: 40px; font-size: 1.25rem; font-weight: 700; }
+  .rc-domain { display: block; color: var(--muted); font-size: .8rem; margin-top: .3rem; padding-right: 30px; }
+  .rc-lat { display: block; font-size: 1.55rem; font-family: var(--mono); font-weight: 700; margin-top: .8rem; }
+  .rc-lat.good { color: var(--accent); }
+  .rc-lat.bad { font-size: 1rem; color: var(--danger); }
+  .rc-rec { display: inline-block; color: var(--accent); font-size: .8rem; font-weight: 700; margin-top: .4rem; }
+  .rc-hint { color: var(--accent); font-weight: 600; min-height: 1.6em; }
+  .redeem-field { border-top: 1px solid var(--border); padding-top: 1.2rem; }
+  .redeem-field label { display: block; font-size: 1.1rem; font-weight: 700; margin-bottom: .6rem; }
+  #btn-redeem { width: 100%; padding: .85rem; font-size: 1.05rem; }
+  @media (max-width: 560px) {
+    body { padding: 1.3rem .8rem; }
+    .card { padding: 1rem; }
+    .region-grid { grid-template-columns: minmax(0, 1fr); }
+    .region-card { min-height: 160px; }
+    .region-toolbar { align-items: flex-start; flex-wrap: wrap; gap: .5rem; }
   }
-  .region-card {
-    position: relative; background: var(--surface-2);
-    border: 2px solid var(--border); border-radius: 10px;
-    padding: .8rem .9rem; cursor: pointer;
-    transition: border-color .15s, background .15s;
-  }
-  .region-card:hover { border-color: #3a4a63; }
-  .region-card.selected { border-color: var(--accent); background: rgba(76, 201, 160, .08); }
-  .region-card .rc-name { font-weight: 600; font-size: 1.05rem; padding-right: 26px; }
-  .region-card .rc-domain { color: var(--muted); font-size: .75rem; margin-top: .1rem; padding-right: 26px; word-break: break-all; }
-  .region-card .rc-lat {
-    display: inline-block; margin-top: .55rem; font-size: .8rem;
-    padding: .1rem .55rem; border-radius: 99px;
-    background: #1d2430; color: var(--muted);
-  }
-  .region-card .rc-lat.good { background: #123528; color: var(--accent); }
-  .region-card .rc-lat.bad { background: #3a1620; color: var(--danger); }
-  .region-card .rc-check {
-    position: absolute; top: 12px; right: 12px; width: 18px; height: 18px;
-    border: 2px solid var(--muted); border-radius: 50%;
-  }
-  .region-card.selected .rc-check {
-    border-color: var(--accent); background: var(--accent);
-    box-shadow: inset 0 0 0 3px var(--surface-2);
-  }
-  .region-card .rc-rec {
-    position: absolute; top: -11px; left: 12px; z-index: 1;
-    background: var(--accent); color: #08120e;
-    font-size: .72rem; font-weight: 700; letter-spacing: .04em;
-    padding: .05rem .55rem; border-radius: 99px;
-  }
-  .rc-hint { margin-top: .7rem; font-size: .82rem; color: var(--accent); font-weight: 600; min-height: 1.2em; }
 </style>
 </head>
 <body>
@@ -102,13 +100,26 @@
 </header>
 
 <div class="card">
-  <h2>兑换中继</h2>
-  <input type="text" id="code" placeholder="输入兑换码,如 DERP-XXXX-XXXX" autocomplete="off">
-  <div class="field" id="region-row" hidden>
-    <label for="region-grid">选择地区(自动推荐延迟最低,可自行勾选)</label>
+  <fieldset class="region-picker" id="region-row" aria-describedby="region-help region-note">
+    <legend>1. 选择 DERP 地区</legend>
+    <p class="region-help" id="region-help">先看延迟推荐，再勾选一个地区。延迟越低，通常连接越快。</p>
+    <div class="recommendation pending" id="recommendation" role="status" aria-live="polite">
+      <div class="rec-label">延迟推荐</div>
+      <h3 id="recommendation-title">正在加载可用地区…</h3>
+      <p id="recommendation-detail">检测完成后会显示延迟最低的地区，请自行勾选。</p>
+      <button type="button" id="btn-pick-recommended" hidden>勾选推荐地区</button>
+    </div>
+    <div class="region-toolbar">
+      <p class="region-help" id="measure-status" role="status">正在获取地区列表…</p>
+      <button type="button" id="btn-remeasure" class="secondary" disabled>重新检测延迟</button>
+    </div>
     <div class="region-grid" id="region-grid"></div>
-    <p class="rc-hint" id="region-hint"></p>
-    <button id="btn-remeasure" class="secondary tiny">重新检测延迟</button>
+    <p class="rc-hint" id="region-hint" role="status">尚未选择地区，请点击卡片勾选。</p>
+    <p class="region-note" id="region-note">延迟为当前浏览器到地区入口的 HTTPS 请求耗时（3 次取最低值），仅供参考；实际 DERP 延迟以 Tailscale 检测为准。重新检测会保留你的选择。</p>
+  </fieldset>
+  <div class="redeem-field">
+    <label for="code">2. 输入兑换码</label>
+    <input type="text" id="code" placeholder="输入兑换码，如 DERP-XXXX-XXXX" autocomplete="off">
   </div>
   <button id="btn-redeem">兑换</button>
   <p class="msg" id="redeem-msg"></p>
@@ -173,114 +184,153 @@
       ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   };
 
-  // ---- 地区推荐:客户端实测延迟,自动推荐最低,用户可自行勾选 ----
+  // 推荐只提供建议；只有用户主动勾选才会设置兑换地区。
   let regions = [];
   let selectedRegion = '';
-  let userPicked = false;
+  let recommendedRegion = '';
+  let measuring = false;
+  let loadingRegions = false;
+  const cards = new Map();
 
   const pick = id => {
+    const region = regions.find(r => r.id === id);
+    if (!region) return;
     selectedRegion = id;
-    userPicked = true;
-    document.querySelectorAll('#region-grid .region-card').forEach(c =>
-      c.classList.toggle('selected', c.dataset.id === id));
+    cards.forEach((card, key) => {
+      card.classList.toggle('selected', key === id);
+      card.querySelector('input').checked = key === id;
+    });
+    $('region-hint').textContent = '已选择：' + region.name + '。将在此地区兑换 DERP。';
   };
 
-  // no-cors 探测:拿不到响应体,但能测出 TLS 握手 + 往返耗时;失败返回 null。
-  const probe = url => new Promise(resolve => {
+  // no-cors 只用于计时，既不读取响应，也不携带凭据或兑换码。
+  const probe = async url => {
     const ac = new AbortController();
-    const to = setTimeout(() => ac.abort(), 6000);
-    const t0 = performance.now();
-    fetch(url, { mode: 'no-cors', cache: 'no-store', signal: ac.signal })
-      .then(() => { clearTimeout(to); resolve(performance.now() - t0); })
-      .catch(() => { clearTimeout(to); resolve(null); });
-  });
+    const timeout = setTimeout(() => ac.abort(), 4000);
+    const start = performance.now();
+    try {
+      await fetch(url, { mode: 'no-cors', cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', signal: ac.signal });
+      return performance.now() - start;
+    } catch (_) {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
 
   const measureRegion = async baseDomain => {
-    const url = 'https://relay.' + baseDomain + '/';
     const samples = [];
     for (let i = 0; i < 3; i++) {
-      const ms = await probe(url);
+      const ms = await probe('https://relay.' + baseDomain + '/derp/latency-check');
       if (ms !== null) samples.push(ms);
     }
-    return samples.length ? Math.min(...samples) : null;
+    return samples.length ? Math.max(1, Math.round(Math.min(...samples))) : null;
   };
 
   const renderRegions = () => {
     const grid = $('region-grid');
-    grid.innerHTML = '';
+    grid.replaceChildren();
+    cards.clear();
     regions.forEach(r => {
-      const card = document.createElement('div');
+      const card = document.createElement('label');
       card.className = 'region-card';
-      card.dataset.id = r.id;
-      card.innerHTML =
-        '<span class="rc-check" aria-hidden="true"></span>' +
-        '<div class="rc-name"></div>' +
-        '<div class="rc-domain"></div>' +
-        '<span class="rc-lat">检测中…</span>';
-      card.querySelector('.rc-name').textContent = r.name;
-      card.querySelector('.rc-domain').textContent = r.baseDomain;
-      card.onclick = () => pick(r.id);
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'region';
+      input.value = r.id;
+      input.setAttribute('aria-label', r.name + ' DERP');
+      input.addEventListener('change', () => pick(r.id));
+      card.appendChild(input);
+      [['rc-name', r.name], ['rc-domain', r.baseDomain], ['rc-lat', '等待检测'], ['rc-rec', '']].forEach(([cls, value]) => {
+        const el = document.createElement('span');
+        el.className = cls;
+        el.textContent = value;
+        card.appendChild(el);
+      });
       grid.appendChild(card);
+      cards.set(r.id, card);
     });
+    if (selectedRegion) pick(selectedRegion);
   };
 
   const measureAll = async () => {
-    const grid = $('region-grid');
-    const results = await Promise.all(regions.map(async r => ({ id: r.id, ms: await measureRegion(r.baseDomain) })));
-    results.forEach(({ id, ms }) => {
-      const card = grid.querySelector('.region-card[data-id="' + id + '"]');
-      if (!card) return;
-      const el = card.querySelector('.rc-lat');
-      el.classList.remove('good', 'bad');
-      if (ms === null) { el.textContent = '检测失败'; el.classList.add('bad'); }
-      else { el.textContent = '≈ ' + Math.round(ms) + ' ms'; if (ms <= 150) el.classList.add('good'); }
-    });
-    grid.querySelectorAll('.rc-rec').forEach(b => b.remove());
-    const best = results.filter(r => r.ms !== null).sort((a, b) => a.ms - b.ms)[0];
-    const recId = best ? best.id : (regions[0] ? regions[0].id : '');
-    if (recId) {
-      const rec = regions.find(r => r.id === recId);
-      const card = grid.querySelector('.region-card[data-id="' + recId + '"]');
-      if (card && rec) {
-        const badge = document.createElement('span');
-        badge.className = 'rc-rec';
-        badge.textContent = '推荐';
-        card.appendChild(badge);
-      }
-      $('region-hint').textContent = '已按延迟自动推荐「' + rec.name + '」' +
-        (best ? ' ≈ ' + Math.round(best.ms) + ' ms' : '') + ' — 点击卡片可手动切换';
-      if (!userPicked) pick(recId);
-    } else {
-      $('region-hint').textContent = '延迟检测失败,请手动选择地区';
-    }
-  };
-
-  // 地区列表:兑换时用户自选(一个码池跨地区共享)。
-  const loadRegions = async () => {
-    try {
-      const d = await api('/v1/regions');
-      const list = d.regions || [];
-      if (!list.length) { $('region-row').hidden = true; return; }
-      regions = list;
-      $('region-row').hidden = false;
-      renderRegions();
-      await measureAll();
-    } catch (e) {
-      // 地区接口不可用时退化为本地默认地区,兑换仍可用。
-      $('region-row').hidden = true;
-    }
-  };
-  loadRegions();
-
-  $('btn-remeasure').onclick = () => {
+    if (measuring || !regions.length) return;
+    measuring = true;
+    recommendedRegion = '';
     $('btn-remeasure').disabled = true;
-    measureAll().finally(() => { $('btn-remeasure').disabled = false; });
+    $('btn-pick-recommended').hidden = true;
+    $('recommendation').classList.add('pending');
+    $('recommendation-title').textContent = '正在检测各地区延迟…';
+    $('recommendation-detail').textContent = '你可以先勾选地区，检测结果不会更改你的选择。';
+    let completed = 0;
+    $('measure-status').textContent = '已检测 0 / ' + regions.length + ' 个地区';
+    cards.forEach(card => {
+      card.classList.remove('recommended');
+      card.querySelector('.rc-rec').textContent = '';
+      card.querySelector('.rc-lat').className = 'rc-lat';
+      card.querySelector('.rc-lat').textContent = '检测中…';
+    });
+    try {
+      const results = await Promise.all(regions.map(async r => {
+        const ms = await measureRegion(r.baseDomain);
+        const el = cards.get(r.id).querySelector('.rc-lat');
+        el.textContent = ms === null ? '暂时无法测得延迟' : '≈ ' + ms + ' ms';
+        el.classList.add(ms === null ? 'bad' : 'good');
+        $('measure-status').textContent = '已检测 ' + (++completed) + ' / ' + regions.length + ' 个地区';
+        return { ...r, ms };
+      }));
+      const best = results.filter(r => r.ms !== null).sort((a, b) => a.ms - b.ms)[0];
+      if (best) {
+        recommendedRegion = best.id;
+        const card = cards.get(best.id);
+        card.classList.add('recommended');
+        card.querySelector('.rc-rec').textContent = '★ 推荐 · 本次延迟最低';
+        $('recommendation').classList.remove('pending');
+        $('recommendation-title').textContent = best.name + ' DERP · ≈ ' + best.ms + ' ms';
+        const failed = results.filter(r => r.ms === null).length;
+        $('recommendation-detail').textContent = '当前测得延迟最低，建议选择此地区。请点击下方按钮或地区卡片自行勾选。' +
+          (failed ? ' 有 ' + failed + ' 个地区未测得延迟，未参与推荐。' : '');
+        $('btn-pick-recommended').hidden = false;
+      } else {
+        $('recommendation-title').textContent = '暂时无法给出延迟推荐';
+        $('recommendation-detail').textContent = '所有地区均未测得延迟，不代表中继一定不可用。请重试检测，或自行勾选地区。';
+      }
+    } finally {
+      measuring = false;
+      $('btn-remeasure').disabled = false;
+    }
   };
+
+  const loadRegions = async () => {
+    if (loadingRegions) return;
+    loadingRegions = true;
+    $('btn-remeasure').disabled = true;
+    try {
+      const d = await api('/v1/regions', { signal: AbortSignal.timeout(10000) });
+      regions = d.regions || [];
+      if (!regions.length) throw new Error('暂无可用地区');
+      renderRegions();
+      $('btn-remeasure').textContent = '重新检测延迟';
+      await measureAll();
+    } catch (_) {
+      $('recommendation-title').textContent = '暂时无法加载可用地区';
+      $('recommendation-detail').textContent = '请点击重新加载地区后再选择，避免误兑换到其他地区。';
+      $('measure-status').textContent = '地区列表加载失败或暂无可用地区';
+      $('btn-remeasure').textContent = '重新加载地区';
+    } finally {
+      loadingRegions = false;
+      $('btn-remeasure').disabled = false;
+    }
+  };
+  $('btn-remeasure').onclick = () => regions.length ? measureAll() : loadRegions();
+  $('btn-pick-recommended').onclick = () => pick(recommendedRegion);
+  loadRegions();
 
   $('btn-redeem').onclick = async () => {
     const code = $('code').value.trim();
-    const region = $('region-row').hidden ? '' : selectedRegion;
+    const region = selectedRegion;
     if (!code) { $('redeem-msg').className = 'msg err'; $('redeem-msg').textContent = '请输入兑换码'; return; }
+    if (!region) { $('redeem-msg').className = 'msg err'; $('redeem-msg').textContent = '请先勾选一个 DERP 地区，再兑换'; $('region-row').scrollIntoView({ behavior: 'smooth' }); return; }
     $('redeem-msg').className = 'msg';
     $('redeem-msg').textContent = '兑换中…';
     $('btn-redeem').disabled = true;

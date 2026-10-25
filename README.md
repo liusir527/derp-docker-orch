@@ -87,7 +87,7 @@ docker compose -f deploy/docker-compose.yml up -d
 
 访问 `http://<host>:8080/redeem`:
 
-1. 输入兑换码(由管理员提供),点击兑换,平台创建专属 DERP 容器
+1. 查看延迟推荐并主动勾选一个地区，再输入兑换码(由管理员提供)并点击兑换，平台创建专属 DERP 容器。地区使用大卡片展示；推荐不会自动勾选，重新检测也不会更改已选地区。延迟为浏览器到地区入口的 HTTPS 请求耗时(3 次取最低值)，实际 DERP 延迟以 Tailscale 检测为准；未测得延迟的地区不参与推荐，仍可手动选择
 2. 复制页面 derpMap JSON
 3. 打开 [Tailscale 管理台 → ACL](https://login.tailscale.com/admin/acls),把 derpMap JSON 粘贴进 policy 文件顶层,保存
 4. 节点重启 tailscale:`tailscale up`(或重启服务)
@@ -102,6 +102,25 @@ docker compose -f deploy/docker-compose.yml up -d
 - **批量导出**:未使用兑换码导出 `.txt`(每行一码)或 `.csv`(含时长字段)
 - **平台概览**:容器数量、宿主内存使用率、容器 CPU
 - **审计日志**:兑换码被哪个实例使用、实例创建/过期时间(分钟级)
+
+## 本地自测试
+
+Go 测试使用内存数据库或测试替身，不需要连接生产服务器或 Docker：
+
+```bash
+go test -count=1 ./...
+go vet ./...
+go build ./...
+```
+
+兑换页浏览器测试需要 Node.js、Playwright 和本机 Chrome。全部页面请求均拦截到模拟接口，不会使用真实兑换码或生产数据。也可设置 `DERP_TEST_BROWSER=chromium` 使用已安装的 Playwright Chromium。
+
+```bash
+npm install --prefix /tmp/derp-ui-tests playwright
+NODE_PATH=/tmp/derp-ui-tests/node_modules node --test internal/api/web/redeem.test.cjs
+```
+
+可选设置 `DERP_UI_SCREENSHOTS=/tmp/derp-ui-review` 保存桌面和手机页面截图。
 
 ## 多地区(第二台服务器)
 
