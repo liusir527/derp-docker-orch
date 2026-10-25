@@ -22,6 +22,7 @@ import (
 	dockerpkg "derp-orch/internal/docker"
 	"derp-orch/internal/lifecycle"
 	"derp-orch/internal/limits"
+	"derp-orch/internal/region"
 	"derp-orch/internal/store"
 )
 
@@ -53,6 +54,35 @@ func main() {
 		log.Fatalf("Docker 客户端初始化失败: %v", err)
 	}
 
+	// 地区种子:本地地区(本机 docker.sock)。若已存在,以 RELAY_BASE_DOMAIN 为准同步域名。
+	seedCtx, seedCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	localRegion := &store.Region{
+		ID:         cfg.RegionSlug,
+		Name:       cfg.RegionName,
+		BaseDomain: cfg.RelayBaseDomain,
+		RegionCode: cfg.RegionCode,
+		Enabled:    true,
+		CreatedAt:  time.Now(),
+	}
+	if err := st.EnsureRegion(seedCtx, localRegion); err != nil {
+		log.Fatalf("初始化本地地区失败: %v", err)
+	}
+	if existing, err := st.GetRegion(seedCtx, cfg.RegionSlug); err == nil && existing.BaseDomain != cfg.RelayBaseDomain {
+		existing.BaseDomain = cfg.RelayBaseDomain
+		if err := st.UpdateRegion(seedCtx, existing); err != nil {
+			log.Printf("警告: 同步本地地区基础域名失败: %v", err)
+		} else {
+			log.Printf("[region] 本地地区 %s 基础域名同步为 %s", existing.ID, cfg.RelayBaseDomain)
+		}
+	}
+	// 历史实例(单地区版本创建)归属本地地区。
+	if n, err := st.BackfillInstanceRegion(seedCtx, cfg.RegionSlug); err != nil {
+		log.Printf("警告: 回填历史实例地区失败: %v", err)
+	} else if n > 0 {
+		log.Printf("[region] 已回填 %d 个历史实例到地区 %s", n, cfg.RegionSlug)
+	}
+	seedCancel()
+
 	// Docker 不可达时降级继续(verify 端点仍可用,编排操作会在使用时报错)。
 	pingCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	if err := orch.Ping(pingCtx); err != nil {
@@ -60,7 +90,9 @@ func main() {
 	}
 	cancel()
 
-	sweep := lifecycle.New(st, orch, cfg.SweepInterval)
+	// 多地区编排路由:按实例 region 分发到本地 docker 或远程 regiond。
+	router := region.New(st, orch, cfg.RegionSlug)
+	sweep := lifecycle.New(st, router, cfg.SweepInterval)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -86,7 +118,7 @@ func main() {
 		MaxContainers:      cfg.MaxContainers,
 		MemoryWatermarkPct: cfg.MemoryWatermarkPct,
 		CPUWatermarkPct:    cfg.CPUWatermarkPct,
-	}, orch, st)
+	}, router, st)
 	// 周期清理过期验证码。
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
@@ -107,13 +139,13 @@ func main() {
 		certEmail = "admin@" + cfg.RelayBaseDomain
 	}
 	certMgr := cert.New(cert.Options{
-		Domain:        "relay." + cfg.RelayBaseDomain,
-		WildcardBase:  "relay",
-		Email:         certEmail,
-		Provider:      cfg.CertDNSProvider,
-		Creds:         map[string]string{"DNSPOD_API_ID": cfg.CertDNSPodID, "DNSPOD_API_TOKEN": cfg.CertDNSPodToken},
-		CertsDir:      cfg.CertsDir,
-		RenewBefore:   time.Duration(cfg.CertRenewBeforeDays) * 24 * time.Hour,
+		Domain:       "relay." + cfg.RelayBaseDomain,
+		WildcardBase: "relay",
+		Email:        certEmail,
+		Provider:     cfg.CertDNSProvider,
+		Creds:        map[string]string{"DNSPOD_API_ID": cfg.CertDNSPodID, "DNSPOD_API_TOKEN": cfg.CertDNSPodToken},
+		CertsDir:     cfg.CertsDir,
+		RenewBefore:  time.Duration(cfg.CertRenewBeforeDays) * 24 * time.Hour,
 	})
 	certMgr.OnRenew = func() error {
 		// 重启所有 derper 容器(进程内缓存证书,必须重启才能加载新证书)。
@@ -141,7 +173,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: api.New(cfg, st, orch, sweep, captchaStore, authmgr, checker),
+		Handler: api.New(cfg, st, router, sweep, captchaStore, authmgr, checker),
 	}
 
 	go func() {

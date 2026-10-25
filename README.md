@@ -103,10 +103,54 @@ docker compose -f deploy/docker-compose.yml up -d
 - **平台概览**:容器数量、宿主内存使用率、容器 CPU
 - **审计日志**:兑换码被哪个实例使用、实例创建/过期时间(分钟级)
 
+## 多地区(第二台服务器)
+
+一个兑换码池跨地区共享:管理员只在一个控制面建码,用户兑换时**自选地区**,平台在该地区创建中继。
+控制面仍只跑在主地区(A),通过 HTTPS + Token 调地区代理 `regiond`,**不需要把 B 的 Docker API 暴露公网**。
+
+```
+用户兑换(选地区)
+      │
+      ▼
+A: platformd ──HTTPS+Token──► B: regiond ──docker.sock──► derper 容器
+      │                            │
+      └── 本地区直接 docker.sock ───┴── nginx-proxy + BT-nginx(各自通配域名)
+```
+
+### 部署 B(以 `cd` 地区为例)
+
+1. **DNS / 证书**:`*.relay.cd.easylan.site` 与 `relay.cd.easylan.site` → B 公网 IP;签发通配证书到 `/www/server/panel/vhost/cert/relay.cd.easylan.site/`(agent 用 `agent.relay.cd.easylan.site`,同属该通配证书)。
+2. **B 的宝塔 nginx** 两个 `server` 块:
+   - `relay.cd.easylan.site *.relay.cd.easylan.site` → `proxy_pass 127.0.0.1:1443`(WebSocket 用 `$connection_upgrade`,超时 3600s)
+   - `agent.<base>` → `proxy_pass 127.0.0.1:8081`(供控制面调用,建议只放行 A 的 IP)
+   - 完整示例见 `deploy/nginx-region.conf.example`
+3. **启动 B**:
+   ```bash
+   export REGION_AGENT_TOKEN="$(openssl rand -hex 32)"
+   export DERP_ORCH_IMAGE=ghcr.io/<owner>/<repo>:latest   # 与 A 同一镜像
+   docker compose -f deploy/region-compose.yml up -d
+   ```
+   B 内存较小时建议单独构建精简镜像(约 20MB):交叉编译 `regiond` 后 `docker build -f deploy/Dockerfile.regiond -t derp-orch-regiond:latest .`,compose 里设 `DERP_ORCH_IMAGE=derp-orch-regiond:latest`。
+4. **A 后台登记**:管理面板 →「地区管理」→ 新增
+   - ID `cd`、名称 `西南`、基础域名 `cd.easylan.site`、regionCode `cd`
+   - 代理地址 `https://agent.relay.cd.easylan.site`、令牌填第 3 步的 `REGION_AGENT_TOKEN`
+   - 点「测试」应返回 Docker 正常 + 内存/CPU 概况。
+5. 兑换页会出现地区下拉框;`wh`(本地)与 `cd` 共用同一批兑换码。
+
+### 说明
+
+- `regionID`(900-999)与 STUN 端口(3478+)仍是**全局唯一池**,跨地区统一分配,derpMap 不会冲突;用 `REGION_ID_MAX` 控制上限。
+- 若某地区宿主已有服务占用 `3478/udp`(例如 headscale 的内置 DERP),把控制面的 `STUN_PORT_BASE` 提高到未占用段(如 `3479`),避免新实例端口映射失败。
+- 每个地区必须有**独立基础域名**(通配 DNS 只能指向一台机器),实例子域名按地区域名生成。
+- 地区下已有实例时禁止修改基础域名(存量中继会失联);需先清空实例。
+- 证书续期:控制面的 `cert` 管理只负责本地地区;B 的证书由 B 的宝塔续期,续期后重启 B 上的 derper 容器(`docker restart $(docker ps -q --filter label=app=derp-orch)`)。
+- 资源配额按地区统计(容器数可用地区单独覆盖;远程宿主内存/CPU 由 `regiond` 上报)。
+
 ## API
 
 - `/v1/admin/*`:管理端点,需 admin 会话 cookie(登录后自动携带)
-- `/v1/redeem/redeem`:兑换(公开,IP 限速)
+- `/v1/redeem/redeem`:兑换(公开,IP 限速),请求体 `{code, region?}`;`region` 省略为本地地区
+- `/v1/regions`:公开地区列表(兑换页下拉框)
 - `/v1/instances`:旧 Bearer 端点(`Authorization: Bearer <ADMIN_API_KEY>`),保留向后兼容
 
 | 方法 | 路径 | 说明 |
@@ -115,6 +159,10 @@ docker compose -f deploy/docker-compose.yml up -d
 | GET | `/admin` | 管理面板(登录页) |
 | GET | `/captcha` | 验证码 PNG(响应头 `X-Captcha-Id`) |
 | GET | `/healthz` | 健康检查 |
+| GET | `/v1/regions` | 启用中的地区列表 `{regions:[{id,name,baseDomain,regionCode}]}` |
+| GET/POST | `/v1/admin/regions` | 地区列表 / 新增地区 |
+| PUT/DELETE | `/v1/admin/regions/{id}` | 修改 / 删除地区(有实例不可删、不可改域名) |
+| POST | `/v1/admin/regions/{id}/test` | 探测地区代理连通性与宿主资源 |
 | POST | `/v1/admin/login` | 登录(验证码+密码) |
 | POST | `/v1/admin/logout` | 登出 |
 | POST | `/v1/admin/codes` | 批量建码 `{count, durationValue, durationUnit, prefix?, note?}` |
@@ -123,7 +171,7 @@ docker compose -f deploy/docker-compose.yml up -d
 | GET | `/v1/admin/stats` | 容器数 + 资源 + 码用量 |
 | GET | `/v1/admin/instances` | 实例列表 + 各容器资源 |
 | GET | `/v1/admin/audit` | 审计日志(分钟级) |
-| POST | `/v1/redeem/redeem` | 兑换 `{code}` → 实例 + derpMap |
+| POST | `/v1/redeem/redeem` | 兑换 `{code, region?}` → 实例 + derpMap |
 | POST | `/v1/instances` | 旧:创建实例(Bearer) |
 | POST | `/verify/{instanceID}` | derper 准入回调(协议内部) |
 
@@ -148,6 +196,13 @@ docker compose -f deploy/docker-compose.yml up -d
 | `LOGIN_LOCK_MINUTES` | 15 | 锁定时长 |
 | `DEFAULT_TTL_HOURS` | 24 | 默认有效期(旧端点) |
 | `REGION_ID_BASE` | 900 | regionID 起点 |
+| `REGION_ID_MAX` | 999 | regionID 上限(编号空间耗尽即拒建) |
+| `REGION_SLUG` | wh | 本地地区 ID(客户端选地区用) |
+| `REGION_NAME` | 华中 | 本地地区显示名 |
+| `REGION_CODE` | wh | 本地地区 derpMap RegionCode |
+| `REGION_AGENT_TOKEN` | — 必填(regiond) | 地区代理 Bearer Token,与控制面登记的一致 |
+| `LISTEN_ADDR` | :8081(regiond) | 地区代理监听地址 |
+| `AGENT_TLS_CERT` / `AGENT_TLS_KEY` | 空 | 可选,regiond 直接终止 TLS(否则由前置 nginx 终止) |
 | `STUN_PORT_BASE` | 3478 | 宿主 STUN UDP 端口起点 |
 | `DERP_IMAGE` | shadowofgost/derper:main-2026-08-15 | derper 镜像 |
 | `SWEEP_INTERVAL_SECONDS` | 60 | 过期扫描间隔 |
@@ -156,7 +211,7 @@ docker compose -f deploy/docker-compose.yml up -d
 ## 限制与说明
 
 - **资源配额**:容器数上限 + 内存/CPU 水位双保险,超限拒绝新创建,防宿主崩溃
-- **regionID 空间 900-999 仅 100 个并发实例**(Tailscale 官方保留段);到期即回收复用
+- **regionID 空间 900-999 仅 100 个并发实例**(Tailscale 官方保留段);到期即回收复用,多地区共享同一池
 - 同一 tailnet 若同时引用平台多个实例的 derpMap,regionID 不会冲突(平台全局唯一分配)
 - ACL 里残留已删除实例的 derpMap 无害:derper 会拒绝过期实例的连接
 - 旧 `build-container.sh` 已废弃,仅作 derper 参数参考

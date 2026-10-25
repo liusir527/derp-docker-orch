@@ -19,10 +19,14 @@ import (
 // fakeOrch 可编程假编排器,验证调用与补偿逻辑。
 type fakeOrch struct {
 	ensureErr error
+	ensured   []*store.Instance
 	removed   []string
 }
 
-func (f *fakeOrch) EnsureNode(ctx context.Context, i *store.Instance) error { return f.ensureErr }
+func (f *fakeOrch) EnsureNode(ctx context.Context, i *store.Instance) error {
+	f.ensured = append(f.ensured, i)
+	return f.ensureErr
+}
 func (f *fakeOrch) RemoveNode(ctx context.Context, i *store.Instance) error {
 	f.removed = append(f.removed, i.ID)
 	return nil

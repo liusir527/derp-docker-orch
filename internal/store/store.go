@@ -58,6 +58,20 @@ var migrations = []string{
 		id            INTEGER PRIMARY KEY CHECK(id = 1),
 		password_hash TEXT NOT NULL
 	)`,
+	// v5: 多地区支持。地区注册表 + 实例归属列。
+	`CREATE TABLE IF NOT EXISTS regions (
+		id             TEXT PRIMARY KEY,
+		name           TEXT NOT NULL,
+		base_domain    TEXT NOT NULL,
+		region_code    TEXT NOT NULL,
+		agent_url      TEXT NOT NULL DEFAULT '',
+		agent_token    TEXT NOT NULL DEFAULT '',
+		max_containers INTEGER NOT NULL DEFAULT 0,
+		enabled        INTEGER NOT NULL DEFAULT 1,
+		created_at     TEXT NOT NULL
+	)`,
+	`ALTER TABLE instances ADD COLUMN region TEXT NOT NULL DEFAULT ''`,
+	`CREATE INDEX IF NOT EXISTS idx_instances_region ON instances(region)`,
 }
 
 // Store SQLite 存储。并发安全由 database/sql 连接池保证。

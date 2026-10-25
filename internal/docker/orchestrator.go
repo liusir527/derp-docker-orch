@@ -39,6 +39,25 @@ type Orchestrator interface {
 	Stats(ctx context.Context) (map[string]*ContainerStat, error)
 }
 
+// HostInfoer 可选的宿主资源信息能力(本地实现读 /proc/meminfo;远程代理由 regiond 上报)。
+type HostInfoer interface {
+	HostInfo(ctx context.Context) (HostInfo, error)
+}
+
+// HostInfo 宿主机资源概况。
+type HostInfo struct {
+	MemoryTotalBytes uint64 `json:"memoryTotalBytes"`
+	CPUCores         int    `json:"cpuCores"`
+}
+
+// RegionOrchestrator 多地区编排能力。按地区汇总资源,limits 用它做分地区配额。
+// 未实现时(单机/测试替身)退回全局 Stats。
+type RegionOrchestrator interface {
+	Orchestrator
+	StatsFor(ctx context.Context, region string) (map[string]*ContainerStat, error)
+	HostInfoFor(ctx context.Context, region string) (HostInfo, error)
+}
+
 // ContainerStat 单个容器资源统计。
 type ContainerStat struct {
 	Container string  `json:"container"`
@@ -48,17 +67,17 @@ type ContainerStat struct {
 
 // Options Docker 编排器配置。
 type Options struct {
-	Host      string // Docker Engine API 地址
-	Image     string // derper 镜像
-	Network   string // DEPRECATED: 改用默认 bridge 网,保留字段保持向后兼容
-	CertsDir  string // DEPRECATED: certmode=none 时不挂载,保留字段保持向后兼容
+	Host      string                         // Docker Engine API 地址
+	Image     string                         // derper 镜像
+	Network   string                         // DEPRECATED: 改用默认 bridge 网,保留字段保持向后兼容
+	CertsDir  string                         // DEPRECATED: certmode=none 时不挂载,保留字段保持向后兼容
 	VerifyURL func(i *store.Instance) string // DEPRECATED: 新镜像无 --verify-client-url,保留字段保持向后兼容
 }
 
 // DockerOrchestrator 基于 Docker Engine API 的实现。
 type DockerOrchestrator struct {
-	cli *client.Client
-	op  Options
+	cli   *client.Client
+	op    Options
 	store *store.Store
 }
 
@@ -240,4 +259,3 @@ func natPortMap(hostSTUN int) nat.PortMap {
 		nat.Port("3478/udp"): {{HostIP: "0.0.0.0", HostPort: fmt.Sprintf("%d", hostSTUN)}},
 	}
 }
-

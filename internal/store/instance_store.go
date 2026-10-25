@@ -17,10 +17,10 @@ var ErrNotFound = errors.New("实例不存在")
 // CreateInstance 插入新实例。所有唯一冲突都会返回错误,由调用方重试命名。
 func (s *Store) CreateInstance(ctx context.Context, i *Instance) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO instances (id, name, subdomain, region_id, region_code, stun_port, container_name, expires_at, state, created_at, host_ip)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO instances (id, name, subdomain, region_id, region_code, stun_port, container_name, expires_at, state, created_at, host_ip, region)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		i.ID, i.Name, i.Subdomain, i.RegionID, i.RegionCode, i.STUNPort,
-		i.ContainerName, i.ExpiresAt.UTC().Format(timeFmt), i.State, i.CreatedAt.UTC().Format(timeFmt), i.HostIP)
+		i.ContainerName, i.ExpiresAt.UTC().Format(timeFmt), i.State, i.CreatedAt.UTC().Format(timeFmt), i.HostIP, i.Region)
 	if err != nil {
 		return fmt.Errorf("创建实例: %w", err)
 	}
@@ -43,7 +43,7 @@ func (s *Store) UpdateInstanceExpiresAt(ctx context.Context, id string, t time.T
 // GetInstance 按 ID 查询。
 func (s *Store) GetInstance(ctx context.Context, id string) (*Instance, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, name, subdomain, region_id, region_code, stun_port, container_name, expires_at, state, created_at, host_ip
+		`SELECT id, name, subdomain, region_id, region_code, stun_port, container_name, expires_at, state, created_at, host_ip, region
 		 FROM instances WHERE id = ?`, id)
 	i, err := scanInstance(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -55,7 +55,7 @@ func (s *Store) GetInstance(ctx context.Context, id string) (*Instance, error) {
 // ListInstances 全部实例,按创建时间倒序。
 func (s *Store) ListInstances(ctx context.Context) ([]*Instance, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, subdomain, region_id, region_code, stun_port, container_name, expires_at, state, created_at, host_ip
+		`SELECT id, name, subdomain, region_id, region_code, stun_port, container_name, expires_at, state, created_at, host_ip, region
 		 FROM instances ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("列出实例: %w", err)
@@ -75,7 +75,7 @@ func (s *Store) ListInstances(ctx context.Context) ([]*Instance, error) {
 // ListExpired 过期实例(expires_at <= now)。
 func (s *Store) ListExpired(ctx context.Context, now time.Time) ([]*Instance, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, subdomain, region_id, region_code, stun_port, container_name, expires_at, state, created_at, host_ip
+		`SELECT id, name, subdomain, region_id, region_code, stun_port, container_name, expires_at, state, created_at, host_ip, region
 		 FROM instances WHERE expires_at <= ?`, now.UTC().Format(timeFmt))
 	if err != nil {
 		return nil, fmt.Errorf("查询过期实例: %w", err)
@@ -113,7 +113,7 @@ func scanInstance(row scanner) (*Instance, error) {
 		createdAt string
 	)
 	if err := row.Scan(&i.ID, &i.Name, &i.Subdomain, &i.RegionID, &i.RegionCode,
-		&i.STUNPort, &i.ContainerName, &expiresAt, &i.State, &createdAt, &i.HostIP); err != nil {
+		&i.STUNPort, &i.ContainerName, &expiresAt, &i.State, &createdAt, &i.HostIP, &i.Region); err != nil {
 		return nil, err
 	}
 	var err error
@@ -129,7 +129,7 @@ func scanInstance(row scanner) (*Instance, error) {
 // CreateInstanceAllocated 在单事务内为实例分配 regionID/stunPort 并插入行。
 // 事务内扫描已占用值 → 找空档 → 真实插入;并发冲突(唯一约束)回滚重试。
 // region/stun 冲突在内部处理;返回错误含列名,调用方据此判断是否换名重试。
-func (s *Store) CreateInstanceAllocated(ctx context.Context, inst *Instance, regionBase, stunBase int) error {
+func (s *Store) CreateInstanceAllocated(ctx context.Context, inst *Instance, regionBase, regionMax, stunBase int) error {
 	const retries = 5
 	for attempt := 0; attempt < retries; attempt++ {
 		tx, err := s.db.BeginTx(ctx, nil)
@@ -147,13 +147,17 @@ func (s *Store) CreateInstanceAllocated(ctx context.Context, inst *Instance, reg
 			return err
 		}
 		inst.RegionID = firstFree(regionBase, usedRegion)
+		if regionMax > 0 && inst.RegionID > regionMax {
+			tx.Rollback()
+			return fmt.Errorf("regionID 编号空间耗尽(%d-%d)", regionBase, regionMax)
+		}
 		inst.STUNPort = firstFree(stunBase, usedStun)
 
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO instances (id, name, subdomain, region_id, region_code, stun_port, container_name, expires_at, state, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO instances (id, name, subdomain, region_id, region_code, stun_port, container_name, expires_at, state, created_at, host_ip, region)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			inst.ID, inst.Name, inst.Subdomain, inst.RegionID, inst.RegionCode, inst.STUNPort,
-			inst.ContainerName, inst.ExpiresAt.UTC().Format(timeFmt), inst.State, inst.CreatedAt.UTC().Format(timeFmt), inst.HostIP)
+			inst.ContainerName, inst.ExpiresAt.UTC().Format(timeFmt), inst.State, inst.CreatedAt.UTC().Format(timeFmt), inst.HostIP, inst.Region)
 		if err != nil {
 			tx.Rollback()
 			// 并发下 region/stun 被他人占用 → 重新扫描分配。

@@ -341,8 +341,8 @@ func TestRedeem_UsedCodeInstanceDeletedReturnsExpired(t *testing.T) {
 		t.Fatalf("应 410, got %d: %s", rec.Code, rec.Body.String())
 	}
 	var env struct {
-		OK     bool   `json:"ok"`
-		Error  string `json:"error"`
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &env)
 	if env.Error == "" {

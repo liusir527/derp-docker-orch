@@ -1,0 +1,55 @@
+# 地区宿主(第二地区,例如 cd)部署:nginx-proxy + regiond 代理。
+# 控制面 platformd 仍只跑在主地区(wh),通过 HTTPS + Token 调这里的 regiond;
+# 本机 Docker API 不暴露公网。
+#
+# 用法:
+#   export REGION_AGENT_TOKEN="$(openssl rand -hex 32)"   # 与 platformd 后台"地区管理"里填的令牌一致
+#   export REGION_SLUG=cd
+#   docker compose -f deploy/region-compose.yml up -d
+#
+# 前置(与本机 derper 域名配套):
+#   1. 通配 DNS *.relay.cd.easylan.site → 本机公网 IP
+#   2. 宝塔面板签发 *.relay.cd.easylan.site 证书到 ${CERTS_DIR:-/etc/derp-certs}
+#   3. 宝塔 nginx 站点:
+#        server_name *.relay.cd.easylan.site;  # → proxy_pass 127.0.0.1:1443
+#        server_name agent.cd.easylan.site;    # → proxy_pass 127.0.0.1:8081(给控制面调用)
+#   4. 防火墙放行 443/tcp 与 3478-3578/udp(每个中继一个 STUN 端口)
+services:
+  nginx-proxy:
+    image: jwilder/nginx-proxy:1.11.6
+    container_name: nginx-proxy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1443:80"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+    networks: [orch-net]
+
+  regiond:
+    image: ${DERP_ORCH_IMAGE:-derp-orch:latest}
+    container_name: regiond
+    restart: unless-stopped
+    # 同一镜像,改用 regiond 入口。
+    entrypoint: ["/usr/local/bin/regiond"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      REGION_AGENT_TOKEN: ${REGION_AGENT_TOKEN:?REGION_AGENT_TOKEN 必填}
+      REGION_SLUG: ${REGION_SLUG:-cd}
+      LISTEN_ADDR: :8081
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_NETWORK: orch-net
+      DERP_IMAGE: ${DERP_IMAGE:-shadowofgost/derper:main-2026-08-15}
+    networks: [orch-net]
+    ports:
+      # 只绑本机,由宝塔 nginx / Tailscale 负责对外与 TLS。
+      - "127.0.0.1:8081:8081"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  orch-net:
+    name: orch-net

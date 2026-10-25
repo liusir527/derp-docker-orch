@@ -49,7 +49,7 @@ func seedInstance(t *testing.T, s *Server, id string) *store.Instance {
 		State:         "active",
 		CreatedAt:     time.Now(),
 	}
-	if err := s.store.CreateInstanceAllocated(context.Background(), inst, s.cfg.RegionIDBase, s.cfg.STUNPortBase); err != nil {
+	if err := s.store.CreateInstanceAllocated(context.Background(), inst, s.cfg.RegionIDBase, s.cfg.RegionIDMax, s.cfg.STUNPortBase); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	return inst

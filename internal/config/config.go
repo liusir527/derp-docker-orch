@@ -18,6 +18,15 @@ type Config struct {
 	DefaultTTL time.Duration
 	// RegionIDBase regionID 分配起点,官方保留 900-999 给自定义 DERP。
 	RegionIDBase int
+	// RegionIDMax regionID 分配上限(含),默认 999。所有地区共用一个数字池,
+	// 保证不同宿主机上的 regionID 不重复。
+	RegionIDMax int
+	// RegionSlug 本地地区 slug(regions.id),默认 wh。历史实例回填到该地区。
+	RegionSlug string
+	// RegionName 本地地区展示名,默认同 slug。
+	RegionName string
+	// RegionCode 本地地区在 derpMap 中的 regionCode,默认同 slug。
+	RegionCode string
 	// STUNPortBase 宿主 STUN UDP 端口分配起点,标准端口 3478。
 	STUNPortBase int
 	// DockerHost Docker Engine API 地址。
@@ -83,37 +92,41 @@ type Config struct {
 // Load 从环境变量读取配置,缺失必填项返回错误。
 func Load() (*Config, error) {
 	c := &Config{
-		RelayBaseDomain: os.Getenv("RELAY_BASE_DOMAIN"),
-		DefaultTTL:      durEnv("DEFAULT_TTL_HOURS", 24, time.Hour),
-		RegionIDBase:    intEnv("REGION_ID_BASE", 900),
-		STUNPortBase:    intEnv("STUN_PORT_BASE", 3478),
-		DockerHost:      strEnv("DOCKER_HOST", "unix:///var/run/docker.sock"),
-		AdminAPIKey:     os.Getenv("ADMIN_API_KEY"),
-		CertsDir:        strEnv("CERTS_DIR", "/etc/derp-certs"),
-		DERPImage:       strEnv("DERP_IMAGE", "shadowofgost/derper:main-2026-08-15"),
-		DockerNetwork:   strEnv("DOCKER_NETWORK", "bridge"),
-		VerifyBaseURL:   strEnv("VERIFY_BASE_URL", "http://platformd:8080"),
-		SweepInterval:   durEnv("SWEEP_INTERVAL_SECONDS", 60, time.Second),
-		ListenAddr:      strEnv("LISTEN_ADDR", ":8080"),
-		DERPPort:        intEnv("DERP_PORT", 443),
-		CertDNSProvider: strEnv("CERT_DNS_PROVIDER", "dnspod"),
-		CertDNSPodID:    os.Getenv("CERT_DNSPOD_API_ID"),
-		CertDNSPodToken: os.Getenv("CERT_DNSPOD_API_TOKEN"),
-		CertEmail:       strEnv("CERT_EMAIL", ""),
-		CertRenewBeforeDays: intEnv("CERT_RENEW_BEFORE_DAYS", 30),
-		AdminUsername:     strEnv("ADMIN_USERNAME", "admin"),
-		AdminPassword:     os.Getenv("ADMIN_PASSWORD"),
-		SessionTTL:        durEnv("SESSION_TTL_HOURS", 12, time.Hour),
-		MaxContainers:     intEnv("MAX_CONTAINERS", 100),
-		MemoryWatermarkPct: floatEnv("MEMORY_WATERMARK_PERCENT", 80),
-		CPUWatermarkPct:    floatEnv("CPU_WATERMARK_PERCENT", 80),
-		CaptchaTTLSeconds:  intEnv("CAPTCHA_TTL_SECONDS", 300),
-		RedeemIPRateLimit:  intEnv("REDEEM_IP_RATE_LIMIT", 5),
+		RelayBaseDomain:       os.Getenv("RELAY_BASE_DOMAIN"),
+		DefaultTTL:            durEnv("DEFAULT_TTL_HOURS", 24, time.Hour),
+		RegionIDBase:          intEnv("REGION_ID_BASE", 900),
+		RegionIDMax:           intEnv("REGION_ID_MAX", 999),
+		STUNPortBase:          intEnv("STUN_PORT_BASE", 3478),
+		DockerHost:            strEnv("DOCKER_HOST", "unix:///var/run/docker.sock"),
+		AdminAPIKey:           os.Getenv("ADMIN_API_KEY"),
+		CertsDir:              strEnv("CERTS_DIR", "/etc/derp-certs"),
+		DERPImage:             strEnv("DERP_IMAGE", "shadowofgost/derper:main-2026-08-15"),
+		DockerNetwork:         strEnv("DOCKER_NETWORK", "bridge"),
+		VerifyBaseURL:         strEnv("VERIFY_BASE_URL", "http://platformd:8080"),
+		SweepInterval:         durEnv("SWEEP_INTERVAL_SECONDS", 60, time.Second),
+		ListenAddr:            strEnv("LISTEN_ADDR", ":8080"),
+		DERPPort:              intEnv("DERP_PORT", 443),
+		CertDNSProvider:       strEnv("CERT_DNS_PROVIDER", "dnspod"),
+		CertDNSPodID:          os.Getenv("CERT_DNSPOD_API_ID"),
+		CertDNSPodToken:       os.Getenv("CERT_DNSPOD_API_TOKEN"),
+		CertEmail:             strEnv("CERT_EMAIL", ""),
+		CertRenewBeforeDays:   intEnv("CERT_RENEW_BEFORE_DAYS", 30),
+		AdminUsername:         strEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword:         os.Getenv("ADMIN_PASSWORD"),
+		SessionTTL:            durEnv("SESSION_TTL_HOURS", 12, time.Hour),
+		MaxContainers:         intEnv("MAX_CONTAINERS", 100),
+		MemoryWatermarkPct:    floatEnv("MEMORY_WATERMARK_PERCENT", 80),
+		CPUWatermarkPct:       floatEnv("CPU_WATERMARK_PERCENT", 80),
+		CaptchaTTLSeconds:     intEnv("CAPTCHA_TTL_SECONDS", 300),
+		RedeemIPRateLimit:     intEnv("REDEEM_IP_RATE_LIMIT", 5),
 		RedeemIPWindowSeconds: intEnv("REDEEM_IP_WINDOW_SECONDS", 60),
-		LoginIPRateLimit:   intEnv("LOGIN_IP_RATE_LIMIT", 10),
-		LoginIPWindowSeconds: intEnv("LOGIN_IP_WINDOW_SECONDS", 60),
-		LoginMaxFails:      intEnv("LOGIN_MAX_FAILS", 5),
-		LoginLockMinutes:   intEnv("LOGIN_LOCK_MINUTES", 15),
+		LoginIPRateLimit:      intEnv("LOGIN_IP_RATE_LIMIT", 10),
+		LoginIPWindowSeconds:  intEnv("LOGIN_IP_WINDOW_SECONDS", 60),
+		LoginMaxFails:         intEnv("LOGIN_MAX_FAILS", 5),
+		LoginLockMinutes:      intEnv("LOGIN_LOCK_MINUTES", 15),
+		RegionSlug:            strEnv("REGION_SLUG", "wh"),
+		RegionName:            strEnv("REGION_NAME", strEnv("REGION_SLUG", "wh")),
+		RegionCode:            strEnv("REGION_CODE", strEnv("REGION_SLUG", "wh")),
 	}
 
 	var missing []string

@@ -164,7 +164,36 @@
   <div class="card">
     <h2>平台概览</h2>
     <div class="stats" id="stats-grid"></div>
+    <div class="stats" id="region-stats"></div>
     <div id="warnbar" class="warnbar hidden"></div>
+  </div>
+
+  <!-- 地区管理 -->
+  <div class="card">
+    <h2>地区管理</h2>
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>地区</th><th>基础域名</th><th>regionCode</th><th>代理</th><th>实例数</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody id="region-body"></tbody>
+    </table>
+    </div>
+    <div class="form-grid" style="margin-top:1rem">
+      <div class="field"><label for="r-id">地区 ID(小写,如 cd)</label><input id="r-id" placeholder="cd"></div>
+      <div class="field"><label for="r-name">名称</label><input id="r-name" placeholder="西南"></div>
+      <div class="field"><label for="r-domain">基础域名</label><input id="r-domain" placeholder="cd.easylan.site"></div>
+      <div class="field"><label for="r-code">regionCode</label><input id="r-code" placeholder="cd"></div>
+      <div class="field"><label for="r-agent">代理地址(本地留空)</label><input id="r-agent" placeholder="https://agent.cd.easylan.site"></div>
+      <div class="field"><label for="r-token">代理令牌(编辑留空=不变)</label><input id="r-token" type="password" autocomplete="new-password"></div>
+      <div class="field"><label for="r-max">容器上限(0=平台默认)</label><input id="r-max" type="number" min="0" value="0"></div>
+      <div class="field"><label for="r-enabled">状态</label>
+        <select id="r-enabled"><option value="true">启用</option><option value="false">停用</option></select>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button id="btn-region-save">新增地区</button>
+      <button id="btn-region-reset" class="secondary">重置</button>
+    </div>
+    <p class="msg" id="region-msg"></p>
   </div>
 
   <!-- 建码 -->
@@ -218,7 +247,7 @@
     <h2>运行实例与资源</h2>
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>实例</th><th>子域名</th><th>兑换码</th><th>状态</th><th>CPU%</th><th>内存</th><th>过期时间</th><th>操作</th></tr></thead>
+      <thead><tr><th>实例</th><th>地区</th><th>子域名</th><th>兑换码</th><th>状态</th><th>CPU%</th><th>内存</th><th>过期时间</th><th>操作</th></tr></thead>
       <tbody id="inst-body"></tbody>
     </table>
     </div>
@@ -410,6 +439,17 @@
         div.innerHTML = '<div class="n">' + esc(n) + '</div><div class="l">' + esc(l) + '</div>';
         grid.appendChild(div);
       }
+      const rg = $('region-stats');
+      rg.textContent = '';
+      for (const rr of (d.regions || [])) {
+        const div = document.createElement('div');
+        div.className = 'stat';
+        div.innerHTML = '<div class="n">' + esc(rr.regionName || rr.region || '–') + ' · ' +
+          (rr.activeContainers || 0) + '/' + (rr.maxContainers || 0) + '</div>' +
+          '<div class="l">地区容器 · 内存 ' + (rr.memPct || 0).toFixed(1) + '%</div>';
+        rg.appendChild(div);
+      }
+
       const wb = $('warnbar');
       if ((r.memPct || 0) > 75 || (r.cpuUsedPct || 0) > 75 || d.activeInstances >= r.maxContainers) {
         wb.classList.remove('hidden');
@@ -428,6 +468,7 @@
         const tr = document.createElement('tr');
         tr.innerHTML =
           '<td class="mono">' + esc(i.name) + '</td>' +
+          '<td>' + esc(i.regionName || i.region || '–') + '</td>' +
           '<td class="mono">' + esc(i.subdomain) + '</td>' +
           '<td class="mono">' + esc(i.code || '–') + '</td>' +
           '<td><span class="pill ' + (i.containerState === 'running' ? 'up' : 'down') + '">' + esc(i.containerState) + '</span></td>' +
@@ -460,8 +501,120 @@
     });
   };
 
+
+  // ===== 地区管理 =====
+  let editingRegion = '';
+
+  const resetRegionForm = () => {
+    editingRegion = '';
+    for (const id of ['r-id', 'r-name', 'r-domain', 'r-code', 'r-agent', 'r-token']) $(id).value = '';
+    $('r-max').value = '0';
+    $('r-enabled').value = 'true';
+    $('r-id').disabled = false;
+    $('r-agent').disabled = false;
+    $('r-token').disabled = false;
+    $('btn-region-save').textContent = '新增地区';
+    $('region-msg').textContent = '';
+  };
+
+  const fillRegionForm = r => {
+    editingRegion = r.id;
+    $('r-id').value = r.id;
+    $('r-id').disabled = true;
+    $('r-name').value = r.name || '';
+    $('r-domain').value = r.baseDomain || '';
+    $('r-code').value = r.regionCode || '';
+    $('r-agent').value = r.agentUrl || '';
+    $('r-agent').disabled = !!r.local;
+    $('r-token').value = '';
+    $('r-token').disabled = !!r.local;
+    $('r-max').value = String(r.maxContainers || 0);
+    $('r-enabled').value = r.enabled ? 'true' : 'false';
+    $('btn-region-save').textContent = '保存修改';
+    $('region-msg').textContent = r.local ? '本地地区(本机 docker.sock),域名由 RELAY_BASE_DOMAIN 决定。' : '';
+  };
+
+  const loadRegions = () => api('/v1/admin/regions').then(d => {
+    const tb = $('region-body');
+    tb.textContent = '';
+    for (const r of d.regions) {
+      const tr = document.createElement('tr');
+      tr.dataset.region = JSON.stringify(r);
+      tr.innerHTML =
+        '<td class="mono">' + esc(r.id) + '</td>' +
+        '<td class="mono">' + esc(r.baseDomain) + '</td>' +
+        '<td class="mono">' + esc(r.regionCode) + '</td>' +
+        '<td class="mono">' + esc(r.local ? '本机' : (r.agentUrl || '–')) + '</td>' +
+        '<td>' + (r.instanceCount || 0) + '</td>' +
+        '<td><span class="pill ' + (r.enabled ? 'up' : 'down') + '">' + (r.enabled ? '启用' : '停用') + '</span></td>' +
+        '<td><div class="row-actions">' +
+          '<button class="secondary" data-raction="test" data-id="' + esc(r.id) + '">测试</button>' +
+          '<button class="secondary" data-raction="edit" data-id="' + esc(r.id) + '">编辑</button>' +
+          (r.local ? '' : '<button class="danger" data-raction="delete" data-id="' + esc(r.id) + '">删除</button>') +
+        '</div></td>';
+      tb.appendChild(tr);
+    }
+  });
+
+  $('btn-region-reset').onclick = resetRegionForm;
+
+  $('btn-region-save').onclick = async () => {
+    const payload = {
+      id: $('r-id').value.trim().toLowerCase(),
+      name: $('r-name').value.trim(),
+      baseDomain: $('r-domain').value.trim(),
+      regionCode: $('r-code').value.trim(),
+      agentUrl: $('r-agent').value.trim(),
+      agentToken: $('r-token').value,
+      maxContainers: Number($('r-max').value) || 0,
+      enabled: $('r-enabled').value === 'true',
+    };
+    $('region-msg').textContent = '保存中…';
+    try {
+      if (editingRegion) {
+        await api('/v1/admin/regions/' + encodeURIComponent(editingRegion), { method: 'PUT', body: JSON.stringify(payload) });
+        $('region-msg').textContent = '已保存地区 ' + editingRegion;
+      } else {
+        await api('/v1/admin/regions', { method: 'POST', body: JSON.stringify(payload) });
+        $('region-msg').textContent = '已新增地区 ' + payload.id;
+      }
+      resetRegionForm();
+      refresh();
+    } catch (e) {
+      $('region-msg').textContent = e.message;
+    }
+  };
+
+  $('region-body').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-raction]');
+    if (!btn) return;
+    const tr = btn.closest('tr');
+    const r = JSON.parse(tr.dataset.region);
+    const action = btn.dataset.raction;
+    if (action === 'edit') { fillRegionForm(r); return; }
+    if (action === 'test') {
+      $('region-msg').textContent = '探测 ' + r.id + ' …';
+      api('/v1/admin/regions/' + encodeURIComponent(r.id) + '/test', { method: 'POST' })
+        .then(d => {
+          const i = d.info || {};
+          const gb = b => (b / 1024 / 1024 / 1024).toFixed(1) + ' GB';
+          $('region-msg').textContent = '地区 ' + r.id + ' 可用: Docker=' + (i.dockerOk ? '正常' : '异常') +
+            ' 内存=' + (i.memoryTotalBytes ? gb(i.memoryTotalBytes) : 'N/A') + ' CPU=' + (i.cpuCores || 0) + ' 核';
+        })
+        .catch(err => { $('region-msg').textContent = '探测失败: ' + err.message; });
+      return;
+    }
+    if (action === 'delete') {
+      if (!confirm('确认删除地区 ' + r.id + '?该地区下不能有实例。')) return;
+      api('/v1/admin/regions/' + encodeURIComponent(r.id), { method: 'DELETE' })
+        .then(() => { $('region-msg').textContent = '已删除地区 ' + r.id; refresh(); })
+        .catch(err => { $('region-msg').textContent = '删除失败: ' + err.message; });
+    }
+  });
+
   const refresh = () => {
-    loadCodes().catch(() => {}); loadStats().catch(() => {}); loadInstances().catch(() => {}); loadAudit().catch(() => {});
+    loadCodes().catch(() => {}); loadStats().catch(() => {}); loadInstances().catch(() => {});
+    loadAudit().catch(() => {}); loadRegions().catch(() => {});
   };
 
   // ===== 实例行操作:derpMap 模态框 + 删除二次确认 =====

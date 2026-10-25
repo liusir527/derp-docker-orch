@@ -25,6 +25,12 @@
   }
   .card h2 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: .9rem; }
   input, button, textarea { font: inherit; }
+  .field { margin-top: .6rem; }
+  .field label { display: block; color: var(--muted); font-size: .8rem; margin-bottom: .3rem; letter-spacing: .04em; }
+  select {
+    width: 100%; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: .65rem .8rem;
+  }
   input[type=text] {
     width: 100%; background: var(--surface-2); color: var(--text);
     border: 1px solid var(--border); border-radius: 8px; padding: .7rem .8rem;
@@ -63,12 +69,17 @@
 <div class="card">
   <h2>兑换中继</h2>
   <input type="text" id="code" placeholder="输入兑换码,如 DERP-XXXX-XXXX" autocomplete="off">
+  <div class="field" id="region-row" hidden>
+    <label for="region">选择地区(就近接入)</label>
+    <select id="region"></select>
+  </div>
   <button id="btn-redeem">兑换</button>
   <p class="msg" id="redeem-msg"></p>
 </div>
 
 <div class="card" id="result-card" hidden>
   <h2>中继已就绪</h2>
+  <div class="key" id="r-region-row" hidden>地区 <span id="r-region"></span></div>
   <div class="key">子域名</div>
   <div class="val" id="r-subdomain"></div>
   <div class="key" id="r-state-row">容器状态 <span class="pill up" id="r-state">running</span></div>
@@ -125,8 +136,29 @@
       ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   };
 
+  // 地区列表:兑换时用户自选(一个码池跨地区共享)。
+  const loadRegions = async () => {
+    try {
+      const d = await api('/v1/regions');
+      const sel = $('region');
+      sel.innerHTML = '';
+      (d.regions || []).forEach(r => {
+        const o = document.createElement('option');
+        o.value = r.id;
+        o.textContent = r.name + ' · ' + r.baseDomain;
+        sel.appendChild(o);
+      });
+      $('region-row').hidden = sel.options.length === 0;
+    } catch (e) {
+      // 地区接口不可用时退化为本地默认地区,兑换仍可用。
+      $('region-row').hidden = true;
+    }
+  };
+  loadRegions();
+
   $('btn-redeem').onclick = async () => {
     const code = $('code').value.trim();
+    const region = $('region-row').hidden ? '' : $('region').value;
     if (!code) { $('redeem-msg').className = 'msg err'; $('redeem-msg').textContent = '请输入兑换码'; return; }
     $('redeem-msg').className = 'msg';
     $('redeem-msg').textContent = '兑换中…';
@@ -136,7 +168,7 @@
       const res = await fetch('/v1/redeem/redeem', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code, region }),
       });
       const body = await res.json().catch(() => ({}));
       if (res.status === 410) {
@@ -152,6 +184,12 @@
       current = d;
       $('result-card').hidden = false;
       $('r-subdomain').textContent = d.instance.subdomain;
+      if (d.region && d.region.name) {
+        $('r-region').textContent = d.region.name;
+        $('r-region-row').hidden = false;
+      } else {
+        $('r-region-row').hidden = true;
+      }
       $('r-derpmap').value = JSON.stringify(d.derpMap, null, 2);
       // 重取(redeemed=true)后端不返回容器状态;隐藏该行避免误导。
       $('r-state-row').hidden = !!d.redeemed;

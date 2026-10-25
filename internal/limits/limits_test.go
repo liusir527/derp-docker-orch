@@ -47,7 +47,7 @@ func seedActive(t *testing.T, st *store.Store, n int) {
 			State:         "active",
 			CreatedAt:     base,
 		}
-		if err := st.CreateInstanceAllocated(context.Background(), inst, 900, 3478); err != nil {
+		if err := st.CreateInstanceAllocated(context.Background(), inst, 900, 0, 3478); err != nil {
 			t.Fatalf("CreateInstanceAllocated: %v", err)
 		}
 	}
@@ -59,7 +59,7 @@ func TestCanCreate_MaxContainers(t *testing.T) {
 	orch := &fakeOrch{stats: map[string]*docker.ContainerStat{}}
 	c := New(Options{MaxContainers: 2, MemoryWatermarkPct: 80, CPUWatermarkPct: 80}, orch, st)
 
-	ok, reason, _, err := c.CanCreate(context.Background())
+	ok, reason, _, err := c.CanCreate(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestCanCreate_CPUWatermark(t *testing.T) {
 		"c1": {CPUPct: 90, MemBytes: 100},
 	}}
 	c := New(Options{MaxContainers: 10, MemoryWatermarkPct: 80, CPUWatermarkPct: 80}, orch, st)
-	ok, reason, _, err := c.CanCreate(context.Background())
+	ok, reason, _, err := c.CanCreate(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestCanCreate_Allow(t *testing.T) {
 		"c1": {CPUPct: 10, MemBytes: 100},
 	}}
 	c := New(Options{MaxContainers: 10, MemoryWatermarkPct: 80, CPUWatermarkPct: 80}, orch, st)
-	ok, _, _, err := c.CanCreate(context.Background())
+	ok, _, _, err := c.CanCreate(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}

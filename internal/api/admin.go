@@ -14,6 +14,7 @@ import (
 	"derp-orch/internal/auth"
 	"derp-orch/internal/derp"
 	"derp-orch/internal/docker"
+	"derp-orch/internal/limits"
 	"derp-orch/internal/redeem"
 	"derp-orch/internal/store"
 )
@@ -267,11 +268,26 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 分地区资源报告:失败地区跳过,不影响整体统计。
+	regions, err := s.store.ListRegions(r.Context())
+	if err != nil {
+		regions = nil
+	}
+	regionReps := make([]*limits.Report, 0, len(regions))
+	for _, reg := range regions {
+		rr, err := s.limits.ReportFor(r.Context(), reg.ID)
+		if err != nil {
+			log.Printf("[admin] 地区 %s 资源统计失败: %v", reg.ID, err)
+			continue
+		}
+		regionReps = append(regionReps, rr)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"instances":       len(insts),
 		"activeInstances": active,
 		"codes":           map[string]int{"total": totalCodes, "unused": unusedCodes, "used": usedCodes},
 		"resources":       rep,
+		"regions":         regionReps,
 	})
 }
 
@@ -298,17 +314,25 @@ func (s *Server) handleAdminInstances(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		stats = map[string]*docker.ContainerStat{}
 	}
+	// 地区展示名映射(实例行展示用)。
+	regionNameByID := map[string]string{}
+	if regions, err := s.store.ListRegions(ctx); err == nil {
+		for _, reg := range regions {
+			regionNameByID[reg.ID] = reg.Name
+		}
+	}
 	type row struct {
 		*store.Instance
 		ContainerState string  `json:"containerState"`
 		CPUPct         float64 `json:"cpuPct"`
 		MemBytes       uint64  `json:"memBytes"`
 		Code           string  `json:"code,omitempty"`
+		RegionName     string  `json:"regionName,omitempty"`
 	}
 	out := make([]row, 0, len(insts))
 	for _, i := range insts {
 		st := stats[i.ContainerName]
-		rw := row{Instance: i, ContainerState: "missing", Code: codeByInst[i.ID]}
+		rw := row{Instance: i, ContainerState: "missing", Code: codeByInst[i.ID], RegionName: regionNameByID[i.Region]}
 		if st != nil {
 			rw.ContainerState = "running"
 			rw.CPUPct = st.CPUPct

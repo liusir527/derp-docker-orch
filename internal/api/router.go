@@ -64,6 +64,7 @@ func New(cfg *config.Config, st *store.Store, orch docker.Orchestrator, sweep *l
 
 	// 公开端点。
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /v1/regions", s.handlePublicRegions)
 	mux.Handle("POST /verify/{instanceID}", s.verify)
 	mux.HandleFunc("GET /captcha", s.handleCaptcha)
 
@@ -83,6 +84,11 @@ func New(cfg *config.Config, st *store.Store, orch docker.Orchestrator, sweep *l
 	mux.Handle("DELETE /v1/admin/instances/{id}", s.adminAuth(http.HandlerFunc(s.handleAdminDeleteInstance)))
 	mux.Handle("GET /v1/admin/instances/{id}/derpmap", s.adminAuth(http.HandlerFunc(s.handleAdminDerpMap)))
 	mux.Handle("GET /v1/admin/audit", s.adminAuth(http.HandlerFunc(s.handleAdminAudit)))
+	mux.Handle("GET /v1/admin/regions", s.adminAuth(http.HandlerFunc(s.handleAdminRegions)))
+	mux.Handle("POST /v1/admin/regions", s.adminAuth(http.HandlerFunc(s.handleAdminCreateRegion)))
+	mux.Handle("PUT /v1/admin/regions/{id}", s.adminAuth(http.HandlerFunc(s.handleAdminUpdateRegion)))
+	mux.Handle("DELETE /v1/admin/regions/{id}", s.adminAuth(http.HandlerFunc(s.handleAdminDeleteRegion)))
+	mux.Handle("POST /v1/admin/regions/{id}/test", s.adminAuth(http.HandlerFunc(s.handleAdminTestRegion)))
 
 	// 旧 Bearer 管理端点,保留向后兼容(内部/脚本用)。
 	mux.Handle("POST /v1/instances", s.auth(http.HandlerFunc(s.handleCreateInstance)))

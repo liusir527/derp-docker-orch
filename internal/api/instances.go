@@ -24,6 +24,8 @@ const (
 type createInstanceRequest struct {
 	// TTLHours 有效期(小时),1-168,缺省用平台默认。
 	TTLHours int `json:"ttlHours"`
+	// Region 目标地区 slug,空表示本地地区。
+	Region string `json:"region"`
 }
 
 // createInstanceResponse 创建响应。
@@ -51,7 +53,13 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		ttl = time.Duration(req.TTLHours) * time.Hour
 	}
 
-	inst, err := s.createInstance(r, ttl)
+	reg, err := s.regionFor(r.Context(), req.Region)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	inst, err := s.createInstance(r, ttl, reg)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -68,7 +76,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 // createInstance 完整创建流程,含命名唯一重试与失败补偿。
-func (s *Server) createInstance(r *http.Request, ttl time.Duration) (*store.Instance, error) {
+func (s *Server) createInstance(r *http.Request, ttl time.Duration, reg *store.Region) (*store.Instance, error) {
 	ctx := r.Context()
 	now := time.Now()
 
@@ -81,15 +89,16 @@ func (s *Server) createInstance(r *http.Request, ttl time.Duration) (*store.Inst
 		inst := &store.Instance{
 			ID:            name,
 			Name:          name,
-			Subdomain:     s.cfg.Subdomain(name),
-			RegionCode:    regionCodeFromName(name),
+			Subdomain:     derp.Subdomain(name, reg.BaseDomain),
+			RegionCode:    firstNonEmpty(reg.RegionCode, regionCodeFromName(name)),
+			Region:        reg.ID,
 			ContainerName: name,
 			ExpiresAt:     now.Add(ttl),
 			State:         "active",
 			CreatedAt:     now,
 		}
 		// 单事务内完成 regionID/stunPort 分配 + 插入;命名冲突(并发同秒)→ 换名重试。
-		if err := s.store.CreateInstanceAllocated(ctx, inst, s.cfg.RegionIDBase, s.cfg.STUNPortBase); err != nil {
+		if err := s.store.CreateInstanceAllocated(ctx, inst, s.cfg.RegionIDBase, s.cfg.RegionIDMax, s.cfg.STUNPortBase); err != nil {
 			lastErr = err
 			if isUniqueViolation(err) {
 				continue
@@ -99,6 +108,10 @@ func (s *Server) createInstance(r *http.Request, ttl time.Duration) (*store.Inst
 
 		// 容器编排;失败则补偿删行,释放资源。
 		if err := s.orch.EnsureNode(ctx, inst); err != nil {
+			// 容器可能已创建但启动失败(远程同样适用),先尽力清理再删行。
+			if rerr := s.orch.RemoveNode(ctx, inst); rerr != nil {
+				log.Printf("[api] 补偿删除容器 %s 失败: %v", inst.ID, rerr)
+			}
 			if derr := s.store.DeleteInstance(ctx, inst.ID); derr != nil {
 				log.Printf("[api] 补偿删除实例 %s 失败: %v", inst.ID, derr)
 			}
@@ -108,7 +121,7 @@ func (s *Server) createInstance(r *http.Request, ttl time.Duration) (*store.Inst
 		if err := s.store.UpdateInstanceHostIP(ctx, inst.ID, inst.HostIP); err != nil {
 			log.Printf("[api] 更新 HostIP 失败: %v", err)
 		}
-		log.Printf("[api] 创建实例 %s(region=%d stun=%d ttl=%s)", inst.ID, inst.RegionID, inst.STUNPort, ttl)
+		log.Printf("[api] 创建实例 %s(地区=%s region=%d stun=%d ttl=%s)", inst.ID, inst.Region, inst.RegionID, inst.STUNPort, ttl)
 		return inst, nil
 	}
 	return nil, fmt.Errorf("命名重试 %d 次仍冲突: %v", maxNameAttempts, lastErr)

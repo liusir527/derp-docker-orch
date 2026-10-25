@@ -3,6 +3,7 @@ package derp
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"derp-orch/internal/store"
 )
@@ -29,6 +30,12 @@ type node struct {
 	HostName string `json:"hostName"`
 	DERPPort int    `json:"derpPort"`
 	STUNPort int    `json:"stunPort"`
+}
+
+// Subdomain 派生实例子域名:derp-<name>.relay.<baseDomain>。
+// name 已含 derp- 前缀(由 GenerateName 生成)时只去重不加。
+func Subdomain(name, baseDomain string) string {
+	return "derp-" + strings.TrimPrefix(name, "derp-") + ".relay." + baseDomain
 }
 
 // MapForInstance 生成实例的 derpMap JSON(可直接粘贴进 ACL)。

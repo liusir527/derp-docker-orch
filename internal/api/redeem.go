@@ -16,13 +16,17 @@ import (
 // redeemRequest 兑换请求。
 type redeemRequest struct {
 	Code string `json:"code"`
+	// Region 目标地区 slug(用户兑换时自选),空表示本地地区。
+	Region string `json:"region"`
 }
 
 // handleRedeem POST /v1/redeem/redeem。
 // 流程: 限速 → 读码 → 判已用 →
-//   (已用 + 实例在 + 未过期)→ 重取 200 + redeemed=true
-//   (已用 + 实例过期/被删)   → 410
-//   (未用)                  → 配额检查 → reserve 码 → 建实例 → consume 码 → 201 + redeemed=false
+//
+//	(已用 + 实例在 + 未过期)→ 重取 200 + redeemed=true
+//	(已用 + 实例过期/被删)   → 410
+//	(未用)                  → 配额检查 → reserve 码 → 建实例 → consume 码 → 201 + redeemed=false
+//
 // 任一步失败:release 码 + 补偿删行,不留半状态。
 func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	var req redeemRequest
@@ -57,8 +61,15 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 配额准入:防无限量创建。
-	ok, reason, _, err := s.limits.CanCreate(r.Context())
+	// 解析目标地区(用户自选)。已用码在上一分支已返回,不受此影响。
+	reg, err := s.regionFor(r.Context(), req.Region)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// 配额准入:防无限量创建(按地区统计)。
+	ok, reason, _, err := s.limits.CanCreate(r.Context(), reg.ID)
 	if err != nil {
 		log.Printf("[redeem] 资源评估失败: %v", err)
 		writeError(w, http.StatusServiceUnavailable, "资源评估暂时不可用,请稍后再试")
@@ -101,7 +112,7 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	ttl := time.Until(expiry)
 
 	// 建实例(复用既有流程,补偿删行内建)。
-	inst, err := s.createInstance(r, ttl)
+	inst, err := s.createInstance(r, ttl, reg)
 	if err != nil {
 		release()
 		log.Printf("[redeem] 创建实例失败: %v", err)
@@ -128,12 +139,13 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 		Kind:       "redeem",
 		InstanceID: inst.ID,
 		Code:       code,
-		Detail:     "兑换创建实例 创建时间=" + inst.CreatedAt.Format("2006-01-02 15:04") + " 过期时间=" + inst.ExpiresAt.Format("2006-01-02 15:04"),
+		Detail:     "兑换创建实例 地区=" + reg.Name + " 创建时间=" + inst.CreatedAt.Format("2006-01-02 15:04") + " 过期时间=" + inst.ExpiresAt.Format("2006-01-02 15:04"),
 	})
 
-	log.Printf("[redeem] 兑换成功 code=%s instance=%s expires=%s", code, inst.ID, inst.ExpiresAt.Format(time.RFC3339))
+	log.Printf("[redeem] 兑换成功 code=%s 地区=%s instance=%s expires=%s", code, reg.ID, inst.ID, inst.ExpiresAt.Format(time.RFC3339))
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"instance":         inst,
+		"region":           regionPayload(reg),
 		"derpMap":          derpMap,
 		"expiresAt":        inst.ExpiresAt,
 		"secondsRemaining": int64(time.Until(inst.ExpiresAt).Seconds()),
@@ -162,14 +174,24 @@ func (s *Server) handleRedeemLookup(w http.ResponseWriter, r *http.Request, code
 	}
 
 	derpMap, _ := s.buildDerpMap(r.Context(), inst)
-	log.Printf("[redeem] 重取已用码 code=%s instance=%s expires=%s", code, inst.ID, inst.ExpiresAt.Format(time.RFC3339))
+	regionName := inst.Region
+	if reg, err := s.store.GetRegion(r.Context(), inst.Region); err == nil {
+		regionName = reg.Name
+	}
+	log.Printf("[redeem] 重取已用码 code=%s 地区=%s instance=%s expires=%s", code, inst.Region, inst.ID, inst.ExpiresAt.Format(time.RFC3339))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"instance":         inst,
+		"region":           map[string]any{"id": inst.Region, "name": regionName},
 		"derpMap":          derpMap,
 		"expiresAt":        inst.ExpiresAt,
 		"secondsRemaining": int64(time.Until(inst.ExpiresAt).Seconds()),
 		"redeemed":         true,
 	})
+}
+
+// regionPayload 响应里的地区展示信息。
+func regionPayload(reg *store.Region) map[string]any {
+	return map[string]any{"id": reg.ID, "name": reg.Name, "baseDomain": reg.BaseDomain}
 }
 
 // buildDerpMap 序列化 derpMap JSON,失败回退空对象(沿用原 redeem 行为)。

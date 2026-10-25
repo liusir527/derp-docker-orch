@@ -1,0 +1,10 @@
+# 地区代理精简镜像:只需 regiond 二进制(约 20MB),适合内存小的 B 机。
+# 用法(先在构建机交叉编译):
+#   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags='-s -w' -o regiond ./cmd/regiond
+#   docker build -f deploy/Dockerfile.regiond -t derp-orch-regiond:latest .
+FROM alpine:3.22
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories \
+    && apk add --no-cache ca-certificates tzdata
+COPY regiond /usr/local/bin/regiond
+EXPOSE 8081
+ENTRYPOINT ["/usr/local/bin/regiond"]

@@ -31,7 +31,7 @@ func newInstance(id string) *Instance {
 func insertAllocated(t *testing.T, s *Store, id string, regionBase, stunBase int) *Instance {
 	t.Helper()
 	inst := newInstance(id)
-	if err := s.CreateInstanceAllocated(context.Background(), inst, regionBase, stunBase); err != nil {
+	if err := s.CreateInstanceAllocated(context.Background(), inst, regionBase, 0, stunBase); err != nil {
 		t.Fatalf("CreateInstanceAllocated(%s): %v", id, err)
 	}
 	return inst
@@ -50,7 +50,7 @@ func TestCreateInstanceAllocated_Concurrent(t *testing.T) {
 		go func(n int) {
 			defer wg.Done()
 			inst := newInstance(fmt.Sprintf("inst-%d-%d", n, time.Now().UnixNano()))
-			if err := s.CreateInstanceAllocated(ctx, inst, 900, 3478); err != nil {
+			if err := s.CreateInstanceAllocated(ctx, inst, 900, 0, 3478); err != nil {
 				t.Errorf("CreateInstanceAllocated: %v", err)
 				return
 			}
@@ -120,7 +120,7 @@ func TestListExpired(t *testing.T) {
 	now := time.Now().UTC()
 	expired := newInstance("expired-1")
 	expired.ExpiresAt = now.Add(-time.Minute)
-	if err := s.CreateInstanceAllocated(ctx, expired, 950, 3950); err != nil {
+	if err := s.CreateInstanceAllocated(ctx, expired, 950, 0, 3950); err != nil {
 		t.Fatalf("CreateInstanceAllocated: %v", err)
 	}
 	insertAllocated(t, s, "live-1", 951, 3951)
