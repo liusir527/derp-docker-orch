@@ -27,10 +27,6 @@
   input, button, textarea { font: inherit; }
   .field { margin-top: .6rem; }
   .field label { display: block; color: var(--muted); font-size: .8rem; margin-bottom: .3rem; letter-spacing: .04em; }
-  select {
-    width: 100%; background: var(--surface-2); color: var(--text);
-    border: 1px solid var(--border); border-radius: 8px; padding: .65rem .8rem;
-  }
   input[type=text] {
     width: 100%; background: var(--surface-2); color: var(--text);
     border: 1px solid var(--border); border-radius: 8px; padding: .7rem .8rem;
@@ -42,6 +38,7 @@
   }
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+  button.tiny { padding: .3rem .7rem; font-size: .8rem; margin-top: .5rem; }
   .msg { font-size: .85rem; margin-top: .6rem; min-height: 1.2em; }
   .msg.err { color: var(--danger); }
   .key { color: var(--muted); font-size: .8rem; margin-top: .9rem; }
@@ -58,6 +55,44 @@
   summary { cursor: pointer; color: var(--accent); font-weight: 600; }
   details ol { margin: .8rem 0 .2rem 1.2rem; }
   details code { background: var(--surface-2); padding: .1rem .4rem; border-radius: 4px; font-family: var(--mono); font-size: .85em; }
+
+  /* ---- 地区选择卡片(延迟推荐) ---- */
+  .region-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: .7rem; margin-top: .6rem;
+  }
+  .region-card {
+    position: relative; background: var(--surface-2);
+    border: 2px solid var(--border); border-radius: 10px;
+    padding: .8rem .9rem; cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .region-card:hover { border-color: #3a4a63; }
+  .region-card.selected { border-color: var(--accent); background: rgba(76, 201, 160, .08); }
+  .region-card .rc-name { font-weight: 600; font-size: 1.05rem; padding-right: 26px; }
+  .region-card .rc-domain { color: var(--muted); font-size: .75rem; margin-top: .1rem; padding-right: 26px; word-break: break-all; }
+  .region-card .rc-lat {
+    display: inline-block; margin-top: .55rem; font-size: .8rem;
+    padding: .1rem .55rem; border-radius: 99px;
+    background: #1d2430; color: var(--muted);
+  }
+  .region-card .rc-lat.good { background: #123528; color: var(--accent); }
+  .region-card .rc-lat.bad { background: #3a1620; color: var(--danger); }
+  .region-card .rc-check {
+    position: absolute; top: 12px; right: 12px; width: 18px; height: 18px;
+    border: 2px solid var(--muted); border-radius: 50%;
+  }
+  .region-card.selected .rc-check {
+    border-color: var(--accent); background: var(--accent);
+    box-shadow: inset 0 0 0 3px var(--surface-2);
+  }
+  .region-card .rc-rec {
+    position: absolute; top: -11px; left: 12px; z-index: 1;
+    background: var(--accent); color: #08120e;
+    font-size: .72rem; font-weight: 700; letter-spacing: .04em;
+    padding: .05rem .55rem; border-radius: 99px;
+  }
+  .rc-hint { margin-top: .7rem; font-size: .82rem; color: var(--accent); font-weight: 600; min-height: 1.2em; }
 </style>
 </head>
 <body>
@@ -70,8 +105,10 @@
   <h2>兑换中继</h2>
   <input type="text" id="code" placeholder="输入兑换码,如 DERP-XXXX-XXXX" autocomplete="off">
   <div class="field" id="region-row" hidden>
-    <label for="region">选择地区(就近接入)</label>
-    <select id="region"></select>
+    <label for="region-grid">选择地区(自动推荐延迟最低,可自行勾选)</label>
+    <div class="region-grid" id="region-grid"></div>
+    <p class="rc-hint" id="region-hint"></p>
+    <button id="btn-remeasure" class="secondary tiny">重新检测延迟</button>
   </div>
   <button id="btn-redeem">兑换</button>
   <p class="msg" id="redeem-msg"></p>
@@ -136,19 +173,98 @@
       ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   };
 
+  // ---- 地区推荐:客户端实测延迟,自动推荐最低,用户可自行勾选 ----
+  let regions = [];
+  let selectedRegion = '';
+  let userPicked = false;
+
+  const pick = id => {
+    selectedRegion = id;
+    userPicked = true;
+    document.querySelectorAll('#region-grid .region-card').forEach(c =>
+      c.classList.toggle('selected', c.dataset.id === id));
+  };
+
+  // no-cors 探测:拿不到响应体,但能测出 TLS 握手 + 往返耗时;失败返回 null。
+  const probe = url => new Promise(resolve => {
+    const ac = new AbortController();
+    const to = setTimeout(() => ac.abort(), 6000);
+    const t0 = performance.now();
+    fetch(url, { mode: 'no-cors', cache: 'no-store', signal: ac.signal })
+      .then(() => { clearTimeout(to); resolve(performance.now() - t0); })
+      .catch(() => { clearTimeout(to); resolve(null); });
+  });
+
+  const measureRegion = async baseDomain => {
+    const url = 'https://relay.' + baseDomain + '/';
+    const samples = [];
+    for (let i = 0; i < 3; i++) {
+      const ms = await probe(url);
+      if (ms !== null) samples.push(ms);
+    }
+    return samples.length ? Math.min(...samples) : null;
+  };
+
+  const renderRegions = () => {
+    const grid = $('region-grid');
+    grid.innerHTML = '';
+    regions.forEach(r => {
+      const card = document.createElement('div');
+      card.className = 'region-card';
+      card.dataset.id = r.id;
+      card.innerHTML =
+        '<span class="rc-check" aria-hidden="true"></span>' +
+        '<div class="rc-name"></div>' +
+        '<div class="rc-domain"></div>' +
+        '<span class="rc-lat">检测中…</span>';
+      card.querySelector('.rc-name').textContent = r.name;
+      card.querySelector('.rc-domain').textContent = r.baseDomain;
+      card.onclick = () => pick(r.id);
+      grid.appendChild(card);
+    });
+  };
+
+  const measureAll = async () => {
+    const grid = $('region-grid');
+    const results = await Promise.all(regions.map(async r => ({ id: r.id, ms: await measureRegion(r.baseDomain) })));
+    results.forEach(({ id, ms }) => {
+      const card = grid.querySelector('.region-card[data-id="' + id + '"]');
+      if (!card) return;
+      const el = card.querySelector('.rc-lat');
+      el.classList.remove('good', 'bad');
+      if (ms === null) { el.textContent = '检测失败'; el.classList.add('bad'); }
+      else { el.textContent = '≈ ' + Math.round(ms) + ' ms'; if (ms <= 150) el.classList.add('good'); }
+    });
+    grid.querySelectorAll('.rc-rec').forEach(b => b.remove());
+    const best = results.filter(r => r.ms !== null).sort((a, b) => a.ms - b.ms)[0];
+    const recId = best ? best.id : (regions[0] ? regions[0].id : '');
+    if (recId) {
+      const rec = regions.find(r => r.id === recId);
+      const card = grid.querySelector('.region-card[data-id="' + recId + '"]');
+      if (card && rec) {
+        const badge = document.createElement('span');
+        badge.className = 'rc-rec';
+        badge.textContent = '推荐';
+        card.appendChild(badge);
+      }
+      $('region-hint').textContent = '已按延迟自动推荐「' + rec.name + '」' +
+        (best ? ' ≈ ' + Math.round(best.ms) + ' ms' : '') + ' — 点击卡片可手动切换';
+      if (!userPicked) pick(recId);
+    } else {
+      $('region-hint').textContent = '延迟检测失败,请手动选择地区';
+    }
+  };
+
   // 地区列表:兑换时用户自选(一个码池跨地区共享)。
   const loadRegions = async () => {
     try {
       const d = await api('/v1/regions');
-      const sel = $('region');
-      sel.innerHTML = '';
-      (d.regions || []).forEach(r => {
-        const o = document.createElement('option');
-        o.value = r.id;
-        o.textContent = r.name + ' · ' + r.baseDomain;
-        sel.appendChild(o);
-      });
-      $('region-row').hidden = sel.options.length === 0;
+      const list = d.regions || [];
+      if (!list.length) { $('region-row').hidden = true; return; }
+      regions = list;
+      $('region-row').hidden = false;
+      renderRegions();
+      await measureAll();
     } catch (e) {
       // 地区接口不可用时退化为本地默认地区,兑换仍可用。
       $('region-row').hidden = true;
@@ -156,9 +272,14 @@
   };
   loadRegions();
 
+  $('btn-remeasure').onclick = () => {
+    $('btn-remeasure').disabled = true;
+    measureAll().finally(() => { $('btn-remeasure').disabled = false; });
+  };
+
   $('btn-redeem').onclick = async () => {
     const code = $('code').value.trim();
-    const region = $('region-row').hidden ? '' : $('region').value;
+    const region = $('region-row').hidden ? '' : selectedRegion;
     if (!code) { $('redeem-msg').className = 'msg err'; $('redeem-msg').textContent = '请输入兑换码'; return; }
     $('redeem-msg').className = 'msg';
     $('redeem-msg').textContent = '兑换中…';
